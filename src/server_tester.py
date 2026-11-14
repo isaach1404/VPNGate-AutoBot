@@ -1,171 +1,193 @@
 
-import socket
-import subprocess
-import base64
 import re
-import platform
+import json
+import urllib.request
+import ipaddress
+
+from html.parser import HTMLParser
+from pathlib import Path
 
 
-def ping_server(ip, timeout=3):
-    """
-    Check whether the server responds to ICMP ping.
-    """
+SSTP_URL = "https://www.vpngate.net/en/howto_sstp.aspx"
 
-    try:
-        if platform.system().lower() == "windows":
-            command = [
-                "ping", "-n", "1",
-                "-w", str(timeout * 1000), ip
-            ]
-        else:
-            command = [
-                "ping", "-c", "1",
-                "-W", str(timeout), ip
-            ]
+OUTPUT_FILE = "output/sstp_servers.json"
 
-        result = subprocess.run(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout + 2,
-            check=False
+
+class VPNGateSSTPParser(HTMLParser):
+
+    def __init__(self):
+        super().__init__()
+
+        self.in_row = False
+        self.row_parts = []
+        self.servers = []
+
+    def handle_starttag(self, tag, attrs):
+
+        if tag.lower() == "tr" and not self.in_row:
+            self.in_row = True
+            self.row_parts = []
+
+    def handle_data(self, data):
+
+        if self.in_row:
+            self.row_parts.append(data)
+
+    def handle_endtag(self, tag):
+
+        if tag.lower() != "tr" or not self.in_row:
+            return
+
+        self.in_row = False
+
+        row_text = " ".join(self.row_parts)
+
+        row_text = re.sub(
+            r"\s+",
+            " ",
+            row_text
+        ).strip()
+
+        self.process_row(row_text)
+
+    def process_row(self, row_text):
+
+        sstp_match = re.search(
+            r"SSTP\s*Hostname\s*:\s*"
+            r"([A-Za-z0-9.-]+\.opengw\.net)"
+            r"(?::(\d{1,5}))?",
+            row_text,
+            re.IGNORECASE
         )
 
-        return result.returncode == 0
+        if not sstp_match:
+            return
 
-    except FileNotFoundError:
-        print("WARNING: Ping command is not available.")
-        return False
+        hostname = sstp_match.group(1)
 
-    except subprocess.TimeoutExpired:
-        return False
+        port_text = sstp_match.group(2)
 
-    except Exception as error:
-        print(f"Ping error for {ip}: {error}")
-        return False
+        port = int(port_text) if port_text else 443
 
+        if not 1 <= port <= 65535:
+            return
 
-def extract_openvpn_details(server):
-    """
-    Extract remote host, port and protocol
-    from the OpenVPN configuration.
-    """
-
-    encoded = server.get(
-        "OpenVPN_ConfigData_Base64", ""
-    ).strip()
-
-    if not encoded:
-        return None
-
-    try:
-        config = base64.b64decode(
-            "".join(encoded.split()),
-            validate=True
-        ).decode("utf-8-sig")
-
-    except Exception:
-        return None
-
-    protocol = "udp"
-
-    remote_host = None
-    remote_port = None
-
-    for line in config.splitlines():
-
-        line = line.strip()
-
-        if not line or line.startswith("#") or line.startswith(";"):
-            continue
-
-        parts = line.split()
-
-        if parts[0] == "proto" and len(parts) > 1:
-            protocol = parts[1].lower()
-
-        if parts[0] == "remote" and len(parts) >= 3:
-            remote_host = parts[1]
-            remote_port = parts[2]
-
-            if len(parts) >= 4:
-                protocol = parts[3].lower()
-
-            break
-
-    if not remote_host or not remote_port:
-        return None
-
-    try:
-        remote_port = int(remote_port)
-    except ValueError:
-        return None
-
-    return {
-        "host": remote_host,
-        "port": remote_port,
-        "protocol": protocol
-    }
-
-
-def check_tcp_port(host, port, timeout=3):
-    """
-    Check whether a TCP port accepts connections.
-    """
-
-    try:
-        with socket.create_connection(
-            (host, port),
-            timeout=timeout
-        ):
-            return True
-
-    except (OSError, TimeoutError):
-        return False
-
-
-def test_server(server):
-    """
-    Perform preliminary network checks.
-    """
-
-    ip = server.get("IP", "").strip()
-
-    result = {
-        "ip": ip,
-        "country": server.get("CountryLong", "Unknown"),
-        "ping": False,
-        "protocol": "unknown",
-        "port": None,
-        "port_status": "not_tested",
-        "config_status": "invalid"
-    }
-
-    if not ip:
-        return result
-
-    result["ping"] = ping_server(ip)
-
-    details = extract_openvpn_details(server)
-
-    if details is None:
-        return result
-
-    result["config_status"] = "valid"
-    result["protocol"] = details["protocol"]
-    result["port"] = details["port"]
-
-    if "tcp" in details["protocol"]:
-        result["port_status"] = (
-            "open"
-            if check_tcp_port(
-                details["host"],
-                details["port"]
-            )
-            else "closed_or_blocked"
+        ip_matches = re.findall(
+            r"(?<![\d.])"
+            r"(?:\d{1,3}\.){3}\d{1,3}"
+            r"(?![\d.])",
+            row_text
         )
 
-    elif "udp" in details["protocol"]:
-        result["port_status"] = "not_tested_udp"
+        if not ip_matches:
+            return
 
-    return result
+        ip = ip_matches[0]
+
+        try:
+            ipaddress.ip_address(ip)
+        except ValueError:
+            return
+
+        self.servers.append({
+            "ip": ip,
+            "sstp_hostname": hostname,
+            "sstp_port": port,
+            "username": "vpn",
+            "password": "vpn"
+        })
+
+
+def fetch_sstp_servers():
+
+    print("Connecting to VPN Gate SSTP server list...")
+
+    request = urllib.request.Request(
+        SSTP_URL,
+        headers={
+            "User-Agent": "VPNGate-AutoBot/1.0"
+        }
+    )
+
+    with urllib.request.urlopen(
+        request,
+        timeout=30
+    ) as response:
+
+        html = response.read().decode(
+            "utf-8",
+            errors="replace"
+        )
+
+    parser = VPNGateSSTPParser()
+
+    parser.feed(html)
+
+    unique_servers = {}
+
+    for server in parser.servers:
+
+        key = (
+            server["ip"],
+            server["sstp_hostname"],
+            server["sstp_port"]
+        )
+
+        unique_servers[key] = server
+
+    return list(unique_servers.values())
+
+
+def save_sstp_servers(servers):
+
+    output_path = Path(OUTPUT_FILE)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with output_path.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            servers,
+            file,
+            ensure_ascii=False,
+            indent=4
+        )
+
+
+def main():
+
+    servers = fetch_sstp_servers()
+
+    print()
+    print("========== SSTP FETCH SUMMARY ==========")
+
+    print(f"SSTP servers found: {len(servers)}")
+
+    for index, server in enumerate(
+        servers[:10],
+        start=1
+    ):
+
+        print(
+            f"{index}. "
+            f"IP: {server['ip']} | "
+            f"Hostname: {server['sstp_hostname']} | "
+            f"Port: {server['sstp_port']}"
+        )
+
+    save_sstp_servers(servers)
+
+    print()
+    print(f"Output file: {OUTPUT_FILE}")
+    print("SSTP data collection completed.")
+    print("========================================")
+
+
+if __name__ == "__main__":
+    main()
