@@ -39,3 +39,11 @@ jobs:
           path: vpngate-openvpn-configs.zip
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload selected servers JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpngate-selected-servers
+          path: output/selected_servers.json
+          if-no-files-found: error
+          retention-days: 7
