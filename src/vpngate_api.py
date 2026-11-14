@@ -99,7 +99,7 @@ def test_all_servers(
 ):
 
     print()
-    print("========== SERVER SELECTION ==========")
+    print("========== REAL OPENVPN SERVER SELECTION ==========")
 
     selected_servers = []
     tested_count = 0
@@ -112,6 +112,7 @@ def test_all_servers(
         result = test_server(server)
         tested_count += 1
 
+        print()
         print(
             f"{tested_count}. "
             f"{result['ip']} | "
@@ -120,27 +121,32 @@ def test_all_servers(
             f"Protocol: {result['protocol']} | "
             f"Port: {result['port']} | "
             f"Port Status: {result['port_status']} | "
-            f"Config: {result['config_status']}"
+            f"Config: {result['config_status']} | "
+            f"VPN Connection: {result['connection_status']}"
         )
 
-        is_healthy_tcp = (
+        is_healthy = (
             result["config_status"] == "valid"
             and "tcp" in result["protocol"]
             and result["port_status"] == "open"
+            and result["connection_status"] == "connected"
+            and result["public_ip_before"] is not None
+            and result["public_ip_after"] is not None
+            and result["public_ip_before"] != result["public_ip_after"]
         )
 
-        if is_healthy_tcp:
+        if is_healthy:
 
             selected_servers.append({
                 "server": server,
                 "test_result": result
             })
 
-            print("   SELECTED: Healthy TCP server")
+            print("   SELECTED: Real OpenVPN connection confirmed")
 
         else:
 
-            print("   REJECTED: Server not confirmed healthy")
+            print("   REJECTED: Real OpenVPN connection not confirmed")
 
         print(
             f"Healthy servers found: "
@@ -152,13 +158,13 @@ def test_all_servers(
 
     print(f"Total servers available: {len(servers)}")
     print(f"Servers tested: {tested_count}")
-    print(f"Healthy TCP servers selected: {len(selected_servers)}")
+    print(f"Real OpenVPN connections confirmed: {len(selected_servers)}")
     print(f"Target servers: {target_count}")
 
     if len(selected_servers) >= target_count:
         print("Selection status: TARGET REACHED")
     else:
-        print("Selection status: NOT ENOUGH HEALTHY SERVERS")
+        print("Selection status: NOT ENOUGH VERIFIED SERVERS")
 
     print("==================================")
 
@@ -195,7 +201,11 @@ def save_selected_servers(selected_servers):
             "port": result["port"],
             "ping_test": result["ping"],
             "port_status": result["port_status"],
-            "config_status": result["config_status"]
+            "config_status": result["config_status"],
+
+            "connection_status": result["connection_status"],
+            "public_ip_before": result["public_ip_before"],
+            "public_ip_after": result["public_ip_after"]
 
         })
 
@@ -280,7 +290,7 @@ def main():
             output_dir="output/openvpn"
         )
 
-        # Step 5: Select healthy TCP servers
+        # Step 5: Test real OpenVPN connections
         selected_servers, tested_count = test_all_servers(
             servers,
             target_count=TARGET_HEALTHY_SERVERS
@@ -296,11 +306,11 @@ def main():
         print(f"Servers received: {len(servers)}")
         print(f"OpenVPN files generated: {len(generated_files)}")
         print(f"Servers tested: {tested_count}")
-        print(f"Healthy TCP servers selected: {len(selected_servers)}")
+        print(f"Real OpenVPN connections confirmed: {len(selected_servers)}")
 
         print(
             "VPN Gate API, OpenVPN generation "
-            "and server selection completed."
+            "and real connection testing completed."
         )
 
         print("===================================")
