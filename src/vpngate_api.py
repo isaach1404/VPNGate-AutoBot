@@ -1,8 +1,11 @@
 
 import csv
 import io
+import json
 import urllib.request
 import sys
+
+from pathlib import Path
 
 from openvpn import generate_openvpn_configs
 from server_tester import test_server
@@ -11,6 +14,8 @@ from server_tester import test_server
 API_URL = "https://www.vpngate.net/api/iphone/"
 
 TARGET_HEALTHY_SERVERS = 10
+
+SELECTED_SERVERS_FILE = "output/selected_servers.json"
 
 
 def get_number(value):
@@ -160,6 +165,59 @@ def test_all_servers(
     return selected_servers, tested_count
 
 
+def save_selected_servers(selected_servers):
+
+    output_path = Path(SELECTED_SERVERS_FILE)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    export_data = []
+
+    for item in selected_servers:
+
+        server = item["server"]
+        result = item["test_result"]
+
+        export_data.append({
+
+            "hostname": server.get("HostName", ""),
+            "ip": server.get("IP", ""),
+            "country": server.get("CountryLong", "Unknown"),
+            "country_code": server.get("CountryShort", ""),
+            "score": get_number(server.get("Score")),
+            "speed": get_number(server.get("Speed")),
+            "vpn_ping": get_number(server.get("Ping")),
+
+            "protocol": result["protocol"],
+            "port": result["port"],
+            "ping_test": result["ping"],
+            "port_status": result["port_status"],
+            "config_status": result["config_status"]
+
+        })
+
+    with output_path.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+
+        json.dump(
+            export_data,
+            file,
+            ensure_ascii=False,
+            indent=4
+        )
+
+    print()
+    print("========== JSON EXPORT ==========")
+    print(f"Selected servers saved: {len(export_data)}")
+    print(f"Output file: {output_path}")
+    print("=================================")
+
+
 def main():
 
     try:
@@ -228,7 +286,10 @@ def main():
             target_count=TARGET_HEALTHY_SERVERS
         )
 
-        # Step 6: Final summary
+        # Step 6: Save selected servers to JSON
+        save_selected_servers(selected_servers)
+
+        # Step 7: Final summary
         print()
         print("========== FINAL SUMMARY ==========")
 
