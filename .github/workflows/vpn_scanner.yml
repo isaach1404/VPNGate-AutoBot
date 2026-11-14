@@ -10,23 +10,14 @@ permissions:
   contents: read
 
 jobs:
-  test-runner:
-    name: Test GitHub Runner
+  scan:
+    name: Fetch VPN Gate Servers
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 5
 
     steps:
-      - name: Show execution information
-        run: |
-          echo "=================================="
-          echo "VPN Gate Automation Started"
-          echo "=================================="
-          echo "GitHub Actions is working."
-          echo "Current UTC time:"
-          date -u
-          echo "Python version:"
-          python --version
-          echo "Operating system:"
-          uname -a
-          echo "=================================="
-          echo "Test completed successfully."
+      - name: Download project files
+        uses: actions/checkout@v4
+
+      - name: Run VPN Gate API scanner
+        run: python src/vpngate_api.py
