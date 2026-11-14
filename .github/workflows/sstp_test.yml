@@ -11,19 +11,30 @@ jobs:
   test-sstp:
     name: Test SSTP Data Collection
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Download project files
         uses: actions/checkout@v4
 
-      - name: Run SSTP Fetcher
+      - name: Fetch SSTP servers
         run: python src/sstp_fetcher.py
 
-      - name: Upload SSTP servers JSON
+      - name: Test SSTP servers
+        run: python src/sstp_tester.py
+
+      - name: Upload all SSTP servers
         uses: actions/upload-artifact@v4
         with:
           name: sstp-servers-test
           path: output/sstp_servers.json
+          if-no-files-found: error
+          retention-days: 3
+
+      - name: Upload selected healthy SSTP servers
+        uses: actions/upload-artifact@v4
+        with:
+          name: selected-sstp-servers-test
+          path: output/selected_sstp_servers.json
           if-no-files-found: error
           retention-days: 3
