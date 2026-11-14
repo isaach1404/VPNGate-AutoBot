@@ -57,14 +57,26 @@ def send_telegram_message(message):
         return True
 
     except urllib.error.HTTPError as error:
-        print(
-            f"Telegram HTTP error: {error.code}"
-        )
+        print(f"Telegram HTTP error: {error.code}")
         raise
 
     except urllib.error.URLError:
         print("Could not connect to Telegram API.")
         raise
+
+
+def get_sstp_hostname(server):
+    hostname = str(
+        server.get("hostname", "")
+    ).strip()
+
+    if not hostname:
+        return "Unknown"
+
+    if not hostname.endswith(".opengw.net"):
+        hostname += ".opengw.net"
+
+    return hostname
 
 
 def create_server_message(servers):
@@ -76,18 +88,41 @@ def create_server_message(servers):
     ]
 
     for index, item in enumerate(servers, start=1):
-        hostname = escape(str(item.get("hostname", "Unknown")))
-        ip = escape(str(item.get("ip", "Unknown")))
-        country = escape(str(item.get("country", "Unknown")))
-        protocol = escape(str(item.get("protocol", "Unknown")))
-        port = escape(str(item.get("port", "Unknown")))
+        hostname = escape(
+            str(item.get("hostname", "Unknown"))
+        )
+
+        ip = escape(
+            str(item.get("ip", "Unknown"))
+        )
+
+        country = escape(
+            str(item.get("country", "Unknown"))
+        )
+
+        protocol = escape(
+            str(item.get("protocol", "Unknown"))
+        )
+
+        port = escape(
+            str(item.get("port", "Unknown"))
+        )
+
+        sstp_hostname = escape(
+            get_sstp_hostname(item)
+        )
 
         lines.extend([
             f"<b>{index}. {hostname}</b>",
             f"Country: {country}",
             f"IP: <code>{ip}</code>",
-            f"Protocol: {protocol.upper()}",
-            f"Port: {port}",
+            f"OpenVPN Protocol: {protocol.upper()}",
+            f"OpenVPN Port: {port}",
+            "",
+            "<b>SSTP Connection</b>",
+            f"Hostname: <code>{sstp_hostname}</code>",
+            "Username: <code>vpn</code>",
+            "Password: <code>vpn</code>",
             ""
         ])
 
