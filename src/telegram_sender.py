@@ -8,18 +8,18 @@ from pathlib import Path
 from html import escape
 
 
+OPENVPN_FILE = Path("output/selected_servers.json")
+SSTP_FILE = Path("output/selected_sstp_servers.json")
+
+
 def send_telegram_message(message):
     token = os.getenv("TELEGRAM_BOT_TOKEN")
     chat_id = os.getenv("TELEGRAM_CHAT_ID")
 
     if not token or not chat_id:
-        raise RuntimeError(
-            "Telegram credentials are missing."
-        )
+        raise RuntimeError("Telegram credentials are missing.")
 
-    url = (
-        f"https://api.telegram.org/bot{token}/sendMessage"
-    )
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
 
     payload = {
         "chat_id": chat_id,
@@ -33,25 +33,16 @@ def send_telegram_message(message):
     request = urllib.request.Request(
         url,
         data=data,
-        headers={
-            "Content-Type": "application/json"
-        },
+        headers={"Content-Type": "application/json"},
         method="POST"
     )
 
     try:
-        with urllib.request.urlopen(
-            request,
-            timeout=30
-        ) as response:
-            result = json.loads(
-                response.read().decode("utf-8")
-            )
+        with urllib.request.urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
 
         if not result.get("ok"):
-            raise RuntimeError(
-                "Telegram API rejected the message."
-            )
+            raise RuntimeError("Telegram API rejected the message.")
 
         print("Telegram message sent successfully.")
         return True
@@ -65,96 +56,111 @@ def send_telegram_message(message):
         raise
 
 
-def get_sstp_hostname(server):
-    hostname = str(
-        server.get("hostname", "")
-    ).strip()
+def load_servers(file_path):
+    if not file_path.exists():
+        raise FileNotFoundError(f"Server list not found: {file_path}")
 
-    if not hostname:
-        return "Unknown"
+    with file_path.open("r", encoding="utf-8") as file:
+        servers = json.load(file)
 
-    if not hostname.endswith(".opengw.net"):
-        hostname += ".opengw.net"
+    if not isinstance(servers, list):
+        raise ValueError(f"Invalid server list: {file_path}")
 
-    return hostname
+    return servers
 
 
-def create_server_message(servers):
+def create_openvpn_section(servers):
     lines = [
-        "<b>VPN Gate - Healthy Servers</b>",
-        "",
+        "<b>OPENVPN SERVERS</b>",
         f"Selected servers: {len(servers)}",
         ""
     ]
 
-    for index, item in enumerate(servers, start=1):
-        hostname = escape(
-            str(item.get("hostname", "Unknown"))
-        )
+    if not servers:
+        lines.append("No healthy OpenVPN servers found.")
+        return lines
 
-        ip = escape(
-            str(item.get("ip", "Unknown"))
-        )
-
-        country = escape(
-            str(item.get("country", "Unknown"))
-        )
-
-        protocol = escape(
-            str(item.get("protocol", "Unknown"))
-        )
-
-        port = escape(
-            str(item.get("port", "Unknown"))
-        )
-
-        sstp_hostname = escape(
-            get_sstp_hostname(item)
-        )
+    for index, server in enumerate(servers, start=1):
+        hostname = escape(str(server.get("hostname", "Unknown")))
+        ip = escape(str(server.get("ip", "Unknown")))
+        country = escape(str(server.get("country", "Unknown")))
+        protocol = escape(str(server.get("protocol", "Unknown")))
+        port = escape(str(server.get("port", "Unknown")))
 
         lines.extend([
             f"<b>{index}. {hostname}</b>",
             f"Country: {country}",
             f"IP: <code>{ip}</code>",
-            f"OpenVPN Protocol: {protocol.upper()}",
-            f"OpenVPN Port: {port}",
-            "",
-            "<b>SSTP Connection</b>",
-            f"Hostname: <code>{sstp_hostname}</code>",
-            "Username: <code>vpn</code>",
-            "Password: <code>vpn</code>",
+            f"Protocol: {protocol.upper()}",
+            f"Port: {port}",
             ""
         ])
 
-    lines.append(
+    return lines
+
+
+def create_sstp_section(servers):
+    lines = [
+        "<b>SSTP SERVERS</b>",
+        f"Selected servers: {len(servers)}",
+        ""
+    ]
+
+    if not servers:
+        lines.append("No reachable SSTP servers found.")
+        return lines
+
+    for index, server in enumerate(servers, start=1):
+        ip = escape(str(server.get("ip", "Unknown")))
+        hostname = escape(str(server.get("sstp_hostname", "Unknown")))
+        port = escape(str(server.get("sstp_port", "Unknown")))
+        username = escape(str(server.get("username", "vpn")))
+        password = escape(str(server.get("password", "vpn")))
+
+        lines.extend([
+            f"<b>{index}. {hostname}</b>",
+            f"IP: <code>{ip}</code>",
+            f"SSTP Hostname: <code>{hostname}</code>",
+            f"SSTP Port: <code>{port}</code>",
+            f"Username: <code>{username}</code>",
+            f"Password: <code>{password}</code>",
+            ""
+        ])
+
+    return lines
+
+
+def create_server_message(openvpn_servers, sstp_servers):
+    lines = [
+        "<b>VPN Gate - Healthy Servers</b>",
+        "",
+        *create_openvpn_section(openvpn_servers),
+        "",
+        *create_sstp_section(sstp_servers),
+        "",
         "<i>Generated automatically by VPNGate-AutoBot</i>"
-    )
+    ]
 
     return "\n".join(lines)
 
 
 def main():
-    json_path = Path("output/selected_servers.json")
+    openvpn_servers = load_servers(OPENVPN_FILE)
+    sstp_servers = load_servers(SSTP_FILE)
 
-    if not json_path.exists():
-        raise FileNotFoundError(
-            f"Server list not found: {json_path}"
-        )
-
-    with json_path.open(
-        "r",
-        encoding="utf-8"
-    ) as file:
-        servers = json.load(file)
-
-    if not isinstance(servers, list) or not servers:
-        raise ValueError(
-            "Selected server list is empty or invalid."
-        )
-
-    message = create_server_message(servers)
+    message = create_server_message(
+        openvpn_servers,
+        sstp_servers
+    )
 
     send_telegram_message(message)
+
+    print()
+    print("========== TELEGRAM SUMMARY ==========")
+    print(f"OpenVPN servers sent: {len(openvpn_servers)}")
+    print(f"SSTP servers sent: {len(sstp_servers)}")
+    print("Telegram delivery completed successfully.")
+    print("======================================")
 
 
 if __name__ == "__main__":
