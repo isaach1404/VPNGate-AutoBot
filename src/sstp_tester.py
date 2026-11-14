@@ -1,21 +1,17 @@
 
 import json
 import socket
-
 from pathlib import Path
 
 
 INPUT_FILE = "output/sstp_servers.json"
-
 OUTPUT_FILE = "output/selected_sstp_servers.json"
 
 TARGET_SERVERS = 10
-
 CONNECTION_TIMEOUT = 3
 
 
 def check_tcp_port(host, port, timeout=CONNECTION_TIMEOUT):
-
     try:
         with socket.create_connection(
             (host, port),
@@ -28,7 +24,6 @@ def check_tcp_port(host, port, timeout=CONNECTION_TIMEOUT):
 
 
 def load_sstp_servers():
-
     input_path = Path(INPUT_FILE)
 
     if not input_path.exists():
@@ -40,7 +35,6 @@ def load_sstp_servers():
         "r",
         encoding="utf-8"
     ) as file:
-
         servers = json.load(file)
 
     if not isinstance(servers, list):
@@ -52,9 +46,7 @@ def load_sstp_servers():
 
 
 def test_sstp_servers(servers):
-
     selected_servers = []
-
     tested_count = 0
 
     print()
@@ -65,15 +57,17 @@ def test_sstp_servers(servers):
         if len(selected_servers) >= TARGET_SERVERS:
             break
 
-        hostname = server.get(
-            "sstp_hostname", ""
+        hostname = str(
+            server.get("sstp_hostname", "")
         ).strip()
 
         port = server.get("sstp_port")
-
         ip = server.get("ip", "")
 
-        if not hostname or not isinstance(port, int):
+        if not hostname:
+            continue
+
+        if not isinstance(port, int) or not 1 <= port <= 65535:
             continue
 
         tested_count += 1
@@ -83,20 +77,24 @@ def test_sstp_servers(servers):
             port
         )
 
-        status = "OPEN" if is_open else "CLOSED/BLOCKED"
+        status = (
+            "OPEN"
+            if is_open
+            else "CLOSED/BLOCKED"
+        )
 
         print(
             f"{tested_count}. "
-            f"{ip} | "
-            f"{hostname}:{port} | "
-            f"{status}"
+            f"{ip} | {hostname}:{port} | {status}"
         )
 
         if is_open:
-
             selected_servers.append(server)
 
-            print("   SELECTED: SSTP TCP port is reachable")
+            print(
+                "   SELECTED: "
+                "SSTP TCP port is reachable"
+            )
 
         print(
             f"Healthy SSTP servers: "
@@ -108,7 +106,12 @@ def test_sstp_servers(servers):
 
     print(f"Total SSTP servers available: {len(servers)}")
     print(f"Servers tested: {tested_count}")
-    print(f"Healthy SSTP servers selected: {len(selected_servers)}")
+
+    print(
+        f"Healthy SSTP servers selected: "
+        f"{len(selected_servers)}"
+    )
+
     print(f"Target servers: {TARGET_SERVERS}")
 
     if len(selected_servers) >= TARGET_SERVERS:
@@ -122,7 +125,6 @@ def test_sstp_servers(servers):
 
 
 def save_selected_servers(servers):
-
     output_path = Path(OUTPUT_FILE)
 
     output_path.parent.mkdir(
@@ -143,12 +145,14 @@ def save_selected_servers(servers):
         )
 
     print()
-    print(f"Selected SSTP servers saved: {len(servers)}")
+    print(
+        f"Selected SSTP servers saved: {len(servers)}"
+    )
+
     print(f"Output file: {OUTPUT_FILE}")
 
 
 def main():
-
     servers = load_sstp_servers()
 
     selected = test_sstp_servers(servers)
