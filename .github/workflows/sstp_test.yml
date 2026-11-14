@@ -1,0 +1,29 @@
+
+name: SSTP Fetcher Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-sstp:
+    name: Test SSTP Data Collection
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Download project files
+        uses: actions/checkout@v4
+
+      - name: Run SSTP Fetcher
+        run: python src/sstp_fetcher.py
+
+      - name: Upload SSTP servers JSON
+        uses: actions/upload-artifact@v4
+        with:
+          name: sstp-servers-test
+          path: output/sstp_servers.json
+          if-no-files-found: error
+          retention-days: 3
