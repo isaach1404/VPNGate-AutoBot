@@ -3,6 +3,19 @@ import socket
 import subprocess
 import base64
 import platform
+import tempfile
+import time
+import os
+import re
+import urllib.request
+
+from pathlib import Path
+
+
+OPENVPN_TIMEOUT = 30
+
+VPN_USERNAME = "vpn"
+VPN_PASSWORD = "vpn"
 
 
 def ping_server(ip, timeout=3):
@@ -28,11 +41,7 @@ def ping_server(ip, timeout=3):
 
         return result.returncode == 0
 
-    except FileNotFoundError:
-        print("WARNING: Ping command is not available.")
-        return False
-
-    except subprocess.TimeoutExpired:
+    except (FileNotFoundError, subprocess.TimeoutExpired):
         return False
 
     except Exception as error:
@@ -40,7 +49,7 @@ def ping_server(ip, timeout=3):
         return False
 
 
-def extract_openvpn_details(server):
+def decode_openvpn_config(server):
     encoded = server.get(
         "OpenVPN_ConfigData_Base64", ""
     ).strip()
@@ -54,7 +63,17 @@ def extract_openvpn_details(server):
             validate=True
         ).decode("utf-8-sig")
 
+        return config
+
     except Exception:
+        return None
+
+
+def extract_openvpn_details(server):
+
+    config = decode_openvpn_config(server)
+
+    if not config:
         return None
 
     protocol = "udp"
@@ -62,6 +81,7 @@ def extract_openvpn_details(server):
     remote_port = None
 
     for line in config.splitlines():
+
         line = line.strip()
 
         if not line or line.startswith("#") or line.startswith(";"):
@@ -73,6 +93,7 @@ def extract_openvpn_details(server):
             protocol = parts[1].lower()
 
         if parts[0] == "remote" and len(parts) >= 3:
+
             remote_host = parts[1]
             remote_port = parts[2]
 
@@ -100,6 +121,7 @@ def extract_openvpn_details(server):
 
 
 def check_tcp_port(host, port, timeout=3):
+
     try:
         with socket.create_connection(
             (host, port),
@@ -111,7 +133,255 @@ def check_tcp_port(host, port, timeout=3):
         return False
 
 
+def get_public_ip():
+
+    urls = [
+        "https://api.ipify.org",
+        "https://checkip.amazonaws.com"
+    ]
+
+    for url in urls:
+
+        try:
+            request = urllib.request.Request(
+                url,
+                headers={
+                    "User-Agent": "VPNGate-AutoBot/1.0"
+                }
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=8
+            ) as response:
+
+                public_ip = response.read().decode(
+                    "utf-8"
+                ).strip()
+
+            if re.fullmatch(
+                r"[0-9a-fA-F:.]+",
+                public_ip
+            ):
+                return public_ip
+
+        except Exception:
+            continue
+
+    return None
+
+
+def stop_openvpn(process):
+
+    if process is None:
+        return
+
+    try:
+        if process.poll() is None:
+            process.terminate()
+
+            try:
+                process.wait(timeout=5)
+
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5)
+
+    except Exception as error:
+        print(f"OpenVPN cleanup warning: {error}")
+
+
+def test_openvpn_connection(server, timeout=OPENVPN_TIMEOUT):
+
+    config = decode_openvpn_config(server)
+
+    if not config:
+        return {
+            "status": "invalid_config",
+            "public_ip_before": None,
+            "public_ip_after": None
+        }
+
+    public_ip_before = get_public_ip()
+
+    if not public_ip_before:
+        return {
+            "status": "baseline_ip_unavailable",
+            "public_ip_before": None,
+            "public_ip_after": None
+        }
+
+    process = None
+
+    try:
+
+        with tempfile.TemporaryDirectory(
+            prefix="vpngate_test_"
+        ) as temp_dir:
+
+            temp_path = Path(temp_dir)
+
+            config_path = temp_path / "server.ovpn"
+            credentials_path = temp_path / "credentials.txt"
+            log_path = temp_path / "openvpn.log"
+
+            # Remove existing authentication directives.
+            config_lines = []
+
+            for line in config.splitlines():
+
+                stripped = line.strip()
+
+                if stripped.startswith("auth-user-pass"):
+                    continue
+
+                if stripped.startswith("daemon"):
+                    continue
+
+                if stripped.startswith("log "):
+                    continue
+
+                config_lines.append(line)
+
+            # Create temporary VPN credentials.
+            credentials_path.write_text(
+                f"{VPN_USERNAME}\n{VPN_PASSWORD}\n",
+                encoding="utf-8"
+            )
+
+            os.chmod(credentials_path, 0o600)
+
+            config_path.write_text(
+                "\n".join(config_lines) + "\n",
+                encoding="utf-8"
+            )
+
+            os.chmod(config_path, 0o600)
+
+            command = [
+                "sudo",
+                "-n",
+                "openvpn",
+                "--config",
+                str(config_path),
+                "--auth-user-pass",
+                str(credentials_path),
+                "--redirect-gateway",
+                "def1",
+                "--connect-retry-max",
+                "1",
+                "--connect-timeout",
+                "10",
+                "--verb",
+                "3"
+            ]
+
+            with log_path.open("w") as log_file:
+
+                print(
+                    f"Starting real OpenVPN connection "
+                    f"to {server.get('IP', 'Unknown')}..."
+                )
+
+                process = subprocess.Popen(
+                    command,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT
+                )
+
+                connected = False
+
+                start_time = time.monotonic()
+
+                while time.monotonic() - start_time < timeout:
+
+                    if process.poll() is not None:
+                        break
+
+                    log_file.flush()
+
+                    log_content = log_path.read_text(
+                        encoding="utf-8",
+                        errors="replace"
+                    )
+
+                    if "Initialization Sequence Completed" in log_content:
+                        connected = True
+                        break
+
+                    time.sleep(1)
+
+            if not connected:
+
+                print(
+                    f"OpenVPN connection failed for "
+                    f"{server.get('IP', 'Unknown')}"
+                )
+
+                return {
+                    "status": "connection_failed",
+                    "public_ip_before": public_ip_before,
+                    "public_ip_after": None
+                }
+
+            print("OpenVPN tunnel established.")
+
+            # Allow the VPN routes to settle.
+            time.sleep(2)
+
+            public_ip_after = get_public_ip()
+
+            if not public_ip_after:
+
+                return {
+                    "status": "public_ip_check_failed",
+                    "public_ip_before": public_ip_before,
+                    "public_ip_after": None
+                }
+
+            if public_ip_before != public_ip_after:
+
+                print(
+                    f"Public IP changed: "
+                    f"{public_ip_before} -> {public_ip_after}"
+                )
+
+                return {
+                    "status": "connected",
+                    "public_ip_before": public_ip_before,
+                    "public_ip_after": public_ip_after
+                }
+
+            print(
+                "VPN connection established, "
+                "but public IP did not change."
+            )
+
+            return {
+                "status": "ip_not_changed",
+                "public_ip_before": public_ip_before,
+                "public_ip_after": public_ip_after
+            }
+
+    except Exception as error:
+
+        print(
+            f"OpenVPN test error for "
+            f"{server.get('IP', 'Unknown')}: {error}"
+        )
+
+        return {
+            "status": "test_error",
+            "public_ip_before": None,
+            "public_ip_after": None
+        }
+
+    finally:
+        stop_openvpn(process)
+
+
 def test_server(server):
+
     ip = server.get("IP", "").strip()
 
     result = {
@@ -121,7 +391,10 @@ def test_server(server):
         "protocol": "unknown",
         "port": None,
         "port_status": "not_tested",
-        "config_status": "invalid"
+        "config_status": "invalid",
+        "connection_status": "not_tested",
+        "public_ip_before": None,
+        "public_ip_after": None
     }
 
     if not ip:
@@ -138,17 +411,33 @@ def test_server(server):
     result["protocol"] = details["protocol"]
     result["port"] = details["port"]
 
-    if "tcp" in details["protocol"]:
-        result["port_status"] = (
-            "open"
-            if check_tcp_port(
-                details["host"],
-                details["port"]
-            )
-            else "closed_or_blocked"
-        )
-
-    elif "udp" in details["protocol"]:
+    if "tcp" not in details["protocol"]:
         result["port_status"] = "not_tested_udp"
+        return result
+
+    result["port_status"] = (
+        "open"
+        if check_tcp_port(
+            details["host"],
+            details["port"]
+        )
+        else "closed_or_blocked"
+    )
+
+    if result["port_status"] != "open":
+        return result
+
+    # Perform an actual OpenVPN connection test.
+    connection_result = test_openvpn_connection(server)
+
+    result["connection_status"] = connection_result["status"]
+
+    result["public_ip_before"] = (
+        connection_result["public_ip_before"]
+    )
+
+    result["public_ip_after"] = (
+        connection_result["public_ip_after"]
+    )
 
     return result
