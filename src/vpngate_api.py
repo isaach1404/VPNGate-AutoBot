@@ -206,7 +206,7 @@ def main():
         )
 
         # Step 5: Test VPN servers
-        test_results = test_all_servers(servers)
+        test_results = test_all_servers(servers[:10])
 
         # Step 6: Final summary
         print()
