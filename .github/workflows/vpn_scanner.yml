@@ -1,0 +1,32 @@
+
+name: VPN Gate Scanner
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '7,37 * * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  test-runner:
+    name: Test GitHub Runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Show execution information
+        run: |
+          echo "=================================="
+          echo "VPN Gate Automation Started"
+          echo "=================================="
+          echo "GitHub Actions is working."
+          echo "Current UTC time:"
+          date -u
+          echo "Python version:"
+          python --version
+          echo "Operating system:"
+          uname -a
+          echo "=================================="
+          echo "Test completed successfully."
