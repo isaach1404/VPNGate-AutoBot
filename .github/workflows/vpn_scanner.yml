@@ -22,7 +22,13 @@ jobs:
       - name: Run VPN Gate API scanner
         run: python src/vpngate_api.py
 
-      - name: Send selected servers to Telegram
+      - name: Fetch SSTP servers
+        run: python src/sstp_fetcher.py
+
+      - name: Test SSTP servers
+        run: python src/sstp_tester.py
+
+      - name: Send OpenVPN and SSTP servers to Telegram
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
@@ -46,10 +52,18 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Upload selected servers JSON
+      - name: Upload selected OpenVPN servers
         uses: actions/upload-artifact@v4
         with:
           name: vpngate-selected-servers
           path: output/selected_servers.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload selected SSTP servers
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpngate-selected-sstp-servers
+          path: output/selected_sstp_servers.json
           if-no-files-found: error
           retention-days: 7
