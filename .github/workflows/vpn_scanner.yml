@@ -35,6 +35,19 @@ jobs:
             exit 1
           fi
 
+      - name: Check network interface permissions
+        run: |
+          echo "Checking network administration capability..."
+          if sudo ip tuntap add dev vpn_test mode tun; then
+            echo "TUN interface creation successful."
+            ip link show vpn_test
+            sudo ip link delete vpn_test
+            echo "TUN interface cleanup successful."
+          else
+            echo "TUN interface creation failed."
+            exit 1
+          fi
+
       - name: Run VPN Gate API scanner
         run: python src/vpngate_api.py
 
