@@ -8,6 +8,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 
+# Official VPN Gate public server list
 SSTP_URL = "https://www.vpngate.net/en/"
 
 OUTPUT_FILE = "output/sstp_servers.json"
@@ -124,9 +125,16 @@ def fetch_sstp_servers():
     parser.feed(html)
 
     unique_servers = {}
-    
+
     for server in parser.servers:
-        unique_servers[server["ip"]] = server
+
+        key = (
+            server["ip"],
+            server["sstp_hostname"],
+            server["sstp_port"]
+        )
+
+        unique_servers[key] = server
 
     return list(unique_servers.values())
 
