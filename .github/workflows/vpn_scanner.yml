@@ -13,7 +13,7 @@ jobs:
   scan:
     name: Fetch VPN Gate Servers
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Download project files
@@ -21,3 +21,21 @@ jobs:
 
       - name: Run VPN Gate API scanner
         run: python src/vpngate_api.py
+
+      - name: Package OpenVPN files
+        run: |
+          if [ -d output/openvpn ] && [ "$(find output/openvpn -name '*.ovpn' -type f | wc -l)" -gt 0 ]; then
+            cd output
+            zip -r ../vpngate-openvpn-configs.zip openvpn
+          else
+            echo "No OpenVPN configuration files were generated."
+            exit 1
+          fi
+
+      - name: Upload OpenVPN package
+        uses: actions/upload-artifact@v4
+        with:
+          name: vpngate-openvpn-configs
+          path: vpngate-openvpn-configs.zip
+          if-no-files-found: error
+          retention-days: 7
