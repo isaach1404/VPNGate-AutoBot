@@ -8,7 +8,8 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 
-SSTP_URL = "https://www.vpngate.net/en/howto_sstp.aspx"
+# Official VPN Gate public server list
+SSTP_URL = "https://www.vpngate.net/en/"
 
 OUTPUT_FILE = "output/sstp_servers.json"
 
