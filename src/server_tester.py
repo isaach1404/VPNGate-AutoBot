@@ -27,12 +27,21 @@ def ping_server(ip, timeout=3):
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=timeout + 2
+            timeout=timeout + 2,
+            check=False
         )
 
         return result.returncode == 0
 
-    except Exception:
+    except FileNotFoundError:
+        print("WARNING: Ping command is not available.")
+        return False
+
+    except subprocess.TimeoutExpired:
+        return False
+
+    except Exception as error:
+        print(f"Ping error for {ip}: {error}")
         return False
 
 
