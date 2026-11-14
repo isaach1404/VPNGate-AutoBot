@@ -36,7 +36,7 @@ jobs:
           sstpc --version
 
           echo "PPP version:"
-          pppd --version
+          sudo pppd --version
 
       - name: Check TUN device availability
         run: |
