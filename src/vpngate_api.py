@@ -6,6 +6,8 @@ import sys
 
 from openvpn import generate_openvpn_configs
 
+from server_tester import test_server
+
 API_URL = "https://www.vpngate.net/api/iphone/"
 
 
@@ -70,6 +72,64 @@ def fetch_servers():
     return servers
 
 
+def test_all_servers(servers):
+    """
+    Test all VPN Gate servers and print results.
+    """
+
+    results = []
+
+    print()
+    print("========== SERVER TESTING ==========")
+
+    for index, server in enumerate(servers, start=1):
+
+        result = test_server(server)
+        results.append(result)
+
+        print(
+            f"[{index}/{len(servers)}] "
+            f"{result['country']} | "
+            f"{result['ip']} | "
+            f"Ping: {result['ping']} | "
+            f"Protocol: {result['protocol']} | "
+            f"Port: {result['port']} | "
+            f"Port Status: {result['port_status']} | "
+            f"Config: {result['config_status']}"
+        )
+
+    print()
+    print("========== TEST SUMMARY ==========")
+
+    ping_ok = sum(
+        1 for result in results
+        if result["ping"]
+    )
+
+    valid_configs = sum(
+        1 for result in results
+        if result["config_status"] == "valid"
+    )
+
+    tcp_tested = sum(
+        1 for result in results
+        if result["port_status"] in ("open", "closed_or_blocked")
+    )
+
+    tcp_open = sum(
+        1 for result in results
+        if result["port_status"] == "open"
+    )
+
+    print(f"Total tested: {len(results)}")
+    print(f"Ping responses: {ping_ok}")
+    print(f"Valid OpenVPN configs: {valid_configs}")
+    print(f"TCP ports tested: {tcp_tested}")
+    print(f"TCP ports open: {tcp_open}")
+    print("===================================")
+
+    return results
+
 def main():
     try:
         servers = fetch_servers()
@@ -124,7 +184,9 @@ def main():
             servers,
             output_dir="output/openvpn"
         )
-
+        
+        test_results = test_all_servers(servers)
+        
         print()
         print("========== FINAL SUMMARY ==========")
         print(f"Servers received: {len(servers)}")
