@@ -19,11 +19,24 @@ jobs:
       - name: Download project files
         uses: actions/checkout@v4
 
-      - name: Install and verify OpenVPN
+      - name: Install VPN clients and tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y openvpn
+          sudo apt-get install -y \
+            openvpn \
+            sstp-client \
+            ppp \
+            iproute2 \
+            curl
+
+          echo "OpenVPN version:"
           openvpn --version
+
+          echo "SSTP client version:"
+          sstpc --version
+
+          echo "PPP version:"
+          pppd --version
 
       - name: Check TUN device availability
         run: |
@@ -38,6 +51,7 @@ jobs:
       - name: Check network interface permissions
         run: |
           echo "Checking network administration capability..."
+
           if sudo ip tuntap add dev vpn_test mode tun; then
             echo "TUN interface creation successful."
             ip link show vpn_test
@@ -47,6 +61,17 @@ jobs:
             echo "TUN interface creation failed."
             exit 1
           fi
+
+      - name: Verify SSTP client installation
+        run: |
+          echo "Checking SSTP client..."
+          command -v sstpc
+          sstpc --help || true
+
+          echo "Checking PPP daemon..."
+          command -v pppd
+
+          echo "SSTP client tools are available."
 
       - name: Run VPN Gate API scanner
         run: python src/vpngate_api.py
