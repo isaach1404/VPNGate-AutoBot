@@ -4,6 +4,8 @@ import io
 import urllib.request
 import sys
 
+from openvpn import generate_openvpn_configs
+
 API_URL = "https://www.vpngate.net/api/iphone/"
 
 
@@ -23,7 +25,10 @@ def fetch_servers():
     )
 
     with urllib.request.urlopen(request, timeout=30) as response:
-        content = response.read().decode("utf-8", errors="replace")
+        content = response.read().decode(
+            "utf-8",
+            errors="replace"
+        )
 
     rows = csv.reader(io.StringIO(content))
 
@@ -34,15 +39,16 @@ def fetch_servers():
         if not row:
             continue
 
-        # Find the CSV header
         if header is None:
             first = row[0].strip().lstrip("#")
 
             if first == "HostName":
-                header = [item.strip().lstrip("#") for item in row]
+                header = [
+                    item.strip().lstrip("#")
+                    for item in row
+                ]
             continue
 
-        # Ignore comments and incomplete rows
         if row[0].startswith("#") or len(row) < len(header):
             continue
 
@@ -57,7 +63,9 @@ def fetch_servers():
         servers.append(server)
 
     if header is None:
-        raise RuntimeError("Could not find VPN Gate CSV header.")
+        raise RuntimeError(
+            "Could not find VPN Gate CSV header."
+        )
 
     return servers
 
@@ -71,25 +79,37 @@ def main():
         print(f"Total servers received: {len(servers)}")
 
         if not servers:
-            print("No servers were returned by the API.")
-            sys.exit(1)
+            raise RuntimeError(
+                "No servers were returned by the API."
+            )
 
         openvpn_count = sum(
-            1 for server in servers
-            if server.get("OpenVPN_ConfigData_Base64", "").strip()
+            1
+            for server in servers
+            if server.get(
+                "OpenVPN_ConfigData_Base64", ""
+            ).strip()
         )
 
-        print(f"Servers with OpenVPN config: {openvpn_count}")
+        print(
+            f"Servers with OpenVPN config: {openvpn_count}"
+        )
+
+        servers.sort(
+            key=lambda server: get_number(
+                server.get("Score")
+            ),
+            reverse=True
+        )
+
         print()
         print("First 10 servers:")
         print("-------------------------------------")
 
-        servers.sort(
-            key=lambda server: get_number(server.get("Score")),
-            reverse=True
-        )
-
-        for index, server in enumerate(servers[:10], start=1):
+        for index, server in enumerate(
+            servers[:10],
+            start=1
+        ):
             print(
                 f"{index}. "
                 f"{server.get('CountryLong', 'Unknown')} | "
@@ -99,8 +119,17 @@ def main():
                 f"Score: {server.get('Score', '0')}"
             )
 
-        print("-------------------------------------")
-        print("VPN Gate API test completed successfully.")
+        # Generate OpenVPN configuration files
+        generated_files = generate_openvpn_configs(
+            servers,
+            output_dir="output/openvpn"
+        )
+
+        print()
+        print("========== FINAL SUMMARY ==========")
+        print(f"Servers received: {len(servers)}")
+        print(f"OpenVPN files generated: {len(generated_files)}")
+        print("VPN Gate API and OpenVPN generation completed.")
 
     except Exception as error:
         print(f"ERROR: {error}")
