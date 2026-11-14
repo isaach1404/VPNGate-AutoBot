@@ -13,20 +13,18 @@ jobs:
   scan:
     name: Fetch VPN Gate Servers
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Download project files
         uses: actions/checkout@v4
 
-      - name: Check OpenVPN availability
+      - name: Install and verify OpenVPN
         run: |
-          if command -v openvpn >/dev/null 2>&1; then
-            echo "OpenVPN is installed."
-            openvpn --version
-          else
-            echo "OpenVPN is not installed."
-          fi
+          sudo apt-get update
+          sudo apt-get install -y openvpn
+          echo "OpenVPN installation completed."
+          openvpn --version
 
       - name: Run VPN Gate API scanner
         run: python src/vpngate_api.py
