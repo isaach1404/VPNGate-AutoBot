@@ -10,6 +10,9 @@ from server_tester import test_server
 
 API_URL = "https://www.vpngate.net/api/iphone/"
 
+TARGET_HEALTHY_SERVERS = 10
+BATCH_SIZE = 10
+
 
 def get_number(value):
     try:
@@ -19,6 +22,7 @@ def get_number(value):
 
 
 def fetch_servers():
+
     print("Connecting to VPN Gate API...")
 
     request = urllib.request.Request(
@@ -85,63 +89,110 @@ def fetch_servers():
     return servers
 
 
-def test_all_servers(servers):
-
-
-def test_all_servers(servers, target_count=10):
+def test_all_servers(
+    servers,
+    target_count=TARGET_HEALTHY_SERVERS
+):
 
     print()
     print("========== SERVER SELECTION ==========")
 
     selected_servers = []
-    results = []
+    tested_count = 0
 
-    for index, server in enumerate(servers, start=1):
+    total_batches = (
+        len(servers) + BATCH_SIZE - 1
+    ) // BATCH_SIZE
+
+    for batch_number, start in enumerate(
+        range(0, len(servers), BATCH_SIZE),
+        start=1
+    ):
 
         if len(selected_servers) >= target_count:
             break
 
-        result = test_server(server)
-        results.append(result)
+        batch = servers[
+            start:start + BATCH_SIZE
+        ]
+
+        print()
+        print(
+            f"========== BATCH "
+            f"{batch_number}/{total_batches} =========="
+        )
+
+        for server in batch:
+
+            if len(selected_servers) >= target_count:
+                break
+
+            result = test_server(server)
+
+            tested_count += 1
+
+            print(
+                f"{tested_count}. "
+                f"{result['ip']} | "
+                f"Country: {result['country']} | "
+                f"Ping: {result['ping']} | "
+                f"Protocol: {result['protocol']} | "
+                f"Port: {result['port']} | "
+                f"Port Status: {result['port_status']} | "
+                f"Config: {result['config_status']}"
+            )
+
+            is_healthy_tcp = (
+                result["config_status"] == "valid"
+                and "tcp" in result["protocol"]
+                and result["port_status"] == "open"
+            )
+
+            if is_healthy_tcp:
+
+                selected_servers.append(result)
+
+                print(
+                    "   SELECTED: Healthy TCP server"
+                )
+
+            else:
+
+                print(
+                    "   REJECTED: Server not confirmed healthy"
+                )
 
         print(
-            f"{index}. {result['ip']} | "
-            f"Country: {result['country']} | "
-            f"Ping: {result['ping']} | "
-            f"Protocol: {result['protocol']} | "
-            f"Port: {result['port']} | "
-            f"Port Status: {result['port_status']} | "
-            f"Config: {result['config_status']}"
+            f"Healthy servers found so far: "
+            f"{len(selected_servers)}/{target_count}"
         )
-
-        is_healthy_tcp = (
-            result["config_status"] == "valid"
-            and "tcp" in result["protocol"]
-            and result["port_status"] == "open"
-        )
-
-        if is_healthy_tcp:
-            selected_servers.append(result)
-
-            print("   SELECTED: Healthy TCP server")
-
-        else:
-            print("   REJECTED: Server not confirmed healthy")
 
     print()
     print("========== TEST SUMMARY ==========")
-    print(f"Servers tested: {len(results)}")
-    print(f"Healthy TCP servers selected: {len(selected_servers)}")
+
+    print(f"Total servers available: {len(servers)}")
+    print(f"Servers tested: {tested_count}")
+    print(
+        f"Healthy TCP servers selected: "
+        f"{len(selected_servers)}"
+    )
     print(f"Target servers: {target_count}")
+
+    if len(selected_servers) >= target_count:
+        print("Selection status: TARGET REACHED")
+    else:
+        print("Selection status: NOT ENOUGH HEALTHY SERVERS")
+
     print("==================================")
 
     return selected_servers
+
 
 def main():
 
     try:
 
-        # Step 1: Fetch VPN Gate servers
+        # Step 1: Fetch servers
         servers = fetch_servers()
 
         print()
@@ -156,7 +207,7 @@ def main():
                 "No servers were returned by the API."
             )
 
-        # Step 2: Count servers with OpenVPN configs
+        # Step 2: Count OpenVPN configurations
         openvpn_count = sum(
             1
             for server in servers
@@ -179,7 +230,7 @@ def main():
         )
 
         print()
-        print("First 10 servers:")
+        print("First 10 servers by score:")
         print("-------------------------------------")
 
         for index, server in enumerate(
@@ -196,14 +247,17 @@ def main():
                 f"Score: {server.get('Score', '0')}"
             )
 
-        # Step 4: Generate OpenVPN configuration files
+        # Step 4: Generate OpenVPN files for all servers
         generated_files = generate_openvpn_configs(
             servers,
             output_dir="output/openvpn"
         )
 
-        # Step 5: Test VPN servers
-        test_results = test_all_servers(servers[:10])
+        # Step 5: Select up to 10 healthy TCP servers
+        selected_servers = test_all_servers(
+            servers,
+            target_count=TARGET_HEALTHY_SERVERS
+        )
 
         # Step 6: Final summary
         print()
@@ -218,12 +272,18 @@ def main():
         )
 
         print(
-            f"Servers tested: {len(test_results)}"
+            f"Servers tested: "
+            f"{'0' if not selected_servers else 'See TEST SUMMARY'}"
+        )
+
+        print(
+            f"Healthy TCP servers selected: "
+            f"{len(selected_servers)}"
         )
 
         print(
             "VPN Gate API, OpenVPN generation "
-            "and preliminary server testing completed."
+            "and server selection completed."
         )
 
         print("===================================")
