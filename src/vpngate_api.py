@@ -87,23 +87,25 @@ def fetch_servers():
 
 def test_all_servers(servers):
 
-    print()
-    print("========== SERVER TEST RESULTS ==========")
 
+def test_all_servers(servers, target_count=10):
+
+    print()
+    print("========== SERVER SELECTION ==========")
+
+    selected_servers = []
     results = []
 
-    for index, server in enumerate(
-        servers,
-        start=1
-    ):
+    for index, server in enumerate(servers, start=1):
+
+        if len(selected_servers) >= target_count:
+            break
 
         result = test_server(server)
-
         results.append(result)
 
         print(
-            f"{index}. "
-            f"{result['ip']} | "
+            f"{index}. {result['ip']} | "
             f"Country: {result['country']} | "
             f"Ping: {result['ping']} | "
             f"Protocol: {result['protocol']} | "
@@ -112,33 +114,28 @@ def test_all_servers(servers):
             f"Config: {result['config_status']}"
         )
 
+        is_healthy_tcp = (
+            result["config_status"] == "valid"
+            and "tcp" in result["protocol"]
+            and result["port_status"] == "open"
+        )
+
+        if is_healthy_tcp:
+            selected_servers.append(result)
+
+            print("   SELECTED: Healthy TCP server")
+
+        else:
+            print("   REJECTED: Server not confirmed healthy")
+
     print()
     print("========== TEST SUMMARY ==========")
-
-    ping_success = sum(
-        1 for result in results
-        if result["ping"]
-    )
-
-    valid_configs = sum(
-        1 for result in results
-        if result["config_status"] == "valid"
-    )
-
-    tcp_open = sum(
-        1 for result in results
-        if result["port_status"] == "open"
-    )
-
     print(f"Servers tested: {len(results)}")
-    print(f"Ping successful: {ping_success}")
-    print(f"Valid OpenVPN configs: {valid_configs}")
-    print(f"TCP ports open: {tcp_open}")
-
+    print(f"Healthy TCP servers selected: {len(selected_servers)}")
+    print(f"Target servers: {target_count}")
     print("==================================")
 
-    return results
-
+    return selected_servers
 
 def main():
 
