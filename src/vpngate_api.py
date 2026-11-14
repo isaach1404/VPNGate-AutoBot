@@ -5,8 +5,8 @@ import urllib.request
 import sys
 
 from openvpn import generate_openvpn_configs
-
 from server_tester import test_server
+
 
 API_URL = "https://www.vpngate.net/api/iphone/"
 
@@ -23,10 +23,16 @@ def fetch_servers():
 
     request = urllib.request.Request(
         API_URL,
-        headers={"User-Agent": "VPNGate-AutoBot/1.0"}
+        headers={
+            "User-Agent": "VPNGate-AutoBot/1.0"
+        }
     )
 
-    with urllib.request.urlopen(request, timeout=30) as response:
+    with urllib.request.urlopen(
+        request,
+        timeout=30
+    ) as response:
+
         content = response.read().decode(
             "utf-8",
             errors="replace"
@@ -38,20 +44,27 @@ def fetch_servers():
     servers = []
 
     for row in rows:
+
         if not row:
             continue
 
         if header is None:
+
             first = row[0].strip().lstrip("#")
 
             if first == "HostName":
+
                 header = [
                     item.strip().lstrip("#")
                     for item in row
                 ]
+
             continue
 
-        if row[0].startswith("#") or len(row) < len(header):
+        if row[0].startswith("#"):
+            continue
+
+        if len(row) < len(header):
             continue
 
         server = dict(zip(header, row))
@@ -73,24 +86,25 @@ def fetch_servers():
 
 
 def test_all_servers(servers):
-    """
-    Test all VPN Gate servers and print results.
-    """
+
+    print()
+    print("========== SERVER TEST RESULTS ==========")
 
     results = []
 
-    print()
-    print("========== SERVER TESTING ==========")
-
-    for index, server in enumerate(servers, start=1):
+    for index, server in enumerate(
+        servers,
+        start=1
+    ):
 
         result = test_server(server)
+
         results.append(result)
 
         print(
-            f"[{index}/{len(servers)}] "
-            f"{result['country']} | "
+            f"{index}. "
             f"{result['ip']} | "
+            f"Country: {result['country']} | "
             f"Ping: {result['ping']} | "
             f"Protocol: {result['protocol']} | "
             f"Port: {result['port']} | "
@@ -101,7 +115,7 @@ def test_all_servers(servers):
     print()
     print("========== TEST SUMMARY ==========")
 
-    ping_ok = sum(
+    ping_success = sum(
         1 for result in results
         if result["ping"]
     )
@@ -111,43 +125,47 @@ def test_all_servers(servers):
         if result["config_status"] == "valid"
     )
 
-    tcp_tested = sum(
-        1 for result in results
-        if result["port_status"] in ("open", "closed_or_blocked")
-    )
-
     tcp_open = sum(
         1 for result in results
         if result["port_status"] == "open"
     )
 
-    print(f"Total tested: {len(results)}")
-    print(f"Ping responses: {ping_ok}")
+    print(f"Servers tested: {len(results)}")
+    print(f"Ping successful: {ping_success}")
     print(f"Valid OpenVPN configs: {valid_configs}")
-    print(f"TCP ports tested: {tcp_tested}")
     print(f"TCP ports open: {tcp_open}")
-    print("===================================")
+
+    print("==================================")
 
     return results
 
+
 def main():
+
     try:
+
+        # Step 1: Fetch VPN Gate servers
         servers = fetch_servers()
 
         print()
         print("========== VPN GATE RESULTS ==========")
-        print(f"Total servers received: {len(servers)}")
+
+        print(
+            f"Total servers received: {len(servers)}"
+        )
 
         if not servers:
             raise RuntimeError(
                 "No servers were returned by the API."
             )
 
+        # Step 2: Count servers with OpenVPN configs
         openvpn_count = sum(
             1
             for server in servers
             if server.get(
-                "OpenVPN_ConfigData_Base64", ""
+                "OpenVPN_ConfigData_Base64",
+                ""
             ).strip()
         )
 
@@ -155,6 +173,7 @@ def main():
             f"Servers with OpenVPN config: {openvpn_count}"
         )
 
+        # Step 3: Sort servers by score
         servers.sort(
             key=lambda server: get_number(
                 server.get("Score")
@@ -170,6 +189,7 @@ def main():
             servers[:10],
             start=1
         ):
+
             print(
                 f"{index}. "
                 f"{server.get('CountryLong', 'Unknown')} | "
@@ -179,22 +199,43 @@ def main():
                 f"Score: {server.get('Score', '0')}"
             )
 
-        # Generate OpenVPN configuration files
+        # Step 4: Generate OpenVPN configuration files
         generated_files = generate_openvpn_configs(
             servers,
             output_dir="output/openvpn"
         )
-        
+
+        # Step 5: Test VPN servers
         test_results = test_all_servers(servers)
-        
+
+        # Step 6: Final summary
         print()
         print("========== FINAL SUMMARY ==========")
-        print(f"Servers received: {len(servers)}")
-        print(f"OpenVPN files generated: {len(generated_files)}")
-        print("VPN Gate API and OpenVPN generation completed.")
+
+        print(
+            f"Servers received: {len(servers)}"
+        )
+
+        print(
+            f"OpenVPN files generated: {len(generated_files)}"
+        )
+
+        print(
+            f"Servers tested: {len(test_results)}"
+        )
+
+        print(
+            "VPN Gate API, OpenVPN generation "
+            "and preliminary server testing completed."
+        )
+
+        print("===================================")
 
     except Exception as error:
+
+        print()
         print(f"ERROR: {error}")
+
         sys.exit(1)
 
 
