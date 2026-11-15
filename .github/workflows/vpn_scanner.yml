@@ -72,6 +72,8 @@ jobs:
           command -v pppd
 
           echo "SSTP client tools are available."
+          echo "SSTP package information:"
+          apt-cache policy sstp-client
 
       - name: Run VPN Gate API scanner
         run: python src/vpngate_api.py
