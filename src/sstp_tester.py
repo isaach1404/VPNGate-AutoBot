@@ -25,7 +25,10 @@ def get_public_ip():
             headers={"User-Agent": "VPNGate-AutoBot/1.0"}
         )
 
-        with urllib.request.urlopen(request, timeout=5) as response:
+        with urllib.request.urlopen(
+            request,
+            timeout=5
+        ) as response:
             return response.read().decode().strip()
 
     except Exception:
@@ -122,7 +125,6 @@ def test_sstp_server(server):
                 "--",
                 "debug",
                 "logfile", str(ppp_log),
-                "noauth",
                 "require-mschap-v2",
                 "refuse-eap",
                 "refuse-pap",
@@ -132,10 +134,15 @@ def test_sstp_server(server):
                 "defaultroute",
                 "replacedefaultroute",
                 "usepeerdns",
-                "nodetach"
+                "nodetach",
+                "noauth"
             ]
 
-            with sstp_log.open("w", encoding="utf-8") as log_file:
+            with sstp_log.open(
+                "w",
+                encoding="utf-8"
+            ) as log_file:
+
                 process = subprocess.Popen(
                     command,
                     stdout=log_file,
@@ -149,6 +156,7 @@ def test_sstp_server(server):
                     time.monotonic() - start_time
                     < CONNECTION_TIMEOUT
                 ):
+
                     if process.poll() is not None:
                         break
 
@@ -156,17 +164,39 @@ def test_sstp_server(server):
 
                     current_ip = get_public_ip()
 
-                    if current_ip and current_ip != original_ip:
-                        print(f"Original IP: {original_ip}")
-                        print(f"VPN public IP: {current_ip}")
+                    if (
+                        current_ip
+                        and current_ip != original_ip
+                    ):
+                        print(
+                            f"Original IP: {original_ip}"
+                        )
 
-                        print_log("PPP DIAGNOSTIC LOG", ppp_log)
-                        print_log("SSTP LOG", sstp_log)
+                        print(
+                            f"VPN public IP: {current_ip}"
+                        )
+
+                        print_log(
+                            "PPP DIAGNOSTIC LOG",
+                            ppp_log
+                        )
+
+                        print_log(
+                            "SSTP LOG",
+                            sstp_log
+                        )
 
                         return True
 
-                print_log("PPP DIAGNOSTIC LOG", ppp_log)
-                print_log("SSTP LOG", sstp_log)
+                print_log(
+                    "PPP DIAGNOSTIC LOG",
+                    ppp_log
+                )
+
+                print_log(
+                    "SSTP LOG",
+                    sstp_log
+                )
 
                 return False
 
@@ -180,9 +210,17 @@ def test_sstp_server(server):
 
 def save_selected_servers(servers):
     output_path = Path(OUTPUT_FILE)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with output_path.open("w", encoding="utf-8") as file:
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True
+    )
+
+    with output_path.open(
+        "w",
+        encoding="utf-8"
+    ) as file:
+
         json.dump(
             servers,
             file,
@@ -201,6 +239,7 @@ def main():
     print("========== REAL SSTP CONNECTION TEST ==========")
 
     for server in servers:
+
         if len(selected) >= TARGET_SERVERS:
             break
 
@@ -213,13 +252,21 @@ def main():
         ip = server.get("ip", "")
 
         print()
-        print(f"{tested_count}. Testing {ip} | {hostname}")
+        print(
+            f"{tested_count}. Testing {ip} | {hostname}"
+        )
 
         if test_sstp_server(server):
             selected.append(server)
-            print("RESULT: REAL SSTP CONNECTION CONFIRMED")
+
+            print(
+                "RESULT: REAL SSTP CONNECTION CONFIRMED"
+            )
+
         else:
-            print("RESULT: SSTP CONNECTION FAILED")
+            print(
+                "RESULT: SSTP CONNECTION FAILED"
+            )
 
         print(
             f"Confirmed connections: "
@@ -230,6 +277,7 @@ def main():
 
     print()
     print("========== SSTP TEST SUMMARY ==========")
+
     print(f"Total servers available: {len(servers)}")
     print(f"Servers tested: {tested_count}")
     print(f"Real SSTP connections: {len(selected)}")
