@@ -1,127 +1,177 @@
 
 import json
-import socket
+import os
+import signal
+import subprocess
+import time
+import urllib.request
+
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 
 INPUT_FILE = "output/sstp_servers.json"
 OUTPUT_FILE = "output/selected_sstp_servers.json"
 
 TARGET_SERVERS = 10
-CONNECTION_TIMEOUT = 3
+MAX_SERVERS_TO_TEST = 20
+CONNECTION_TIMEOUT = 30
 
 
-def check_tcp_port(host, port, timeout=CONNECTION_TIMEOUT):
+def get_public_ip():
     try:
-        with socket.create_connection(
-            (host, port),
-            timeout=timeout
-        ):
-            return True
+        request = urllib.request.Request(
+            "https://api.ipify.org",
+            headers={"User-Agent": "VPNGate-AutoBot/1.0"}
+        )
 
-    except (OSError, TimeoutError):
-        return False
+        with urllib.request.urlopen(
+            request,
+            timeout=5
+        ) as response:
+            return response.read().decode().strip()
+
+    except Exception:
+        return None
 
 
 def load_sstp_servers():
-    input_path = Path(INPUT_FILE)
+    path = Path(INPUT_FILE)
 
-    if not input_path.exists():
-        raise FileNotFoundError(
-            f"SSTP input file not found: {INPUT_FILE}"
-        )
+    if not path.exists():
+        raise FileNotFoundError(INPUT_FILE)
 
-    with input_path.open(
-        "r",
-        encoding="utf-8"
-    ) as file:
+    with path.open("r", encoding="utf-8") as file:
         servers = json.load(file)
 
     if not isinstance(servers, list):
-        raise ValueError(
-            "SSTP data must be a JSON list."
-        )
+        raise ValueError("SSTP data must be a JSON list.")
 
     return servers
 
 
-def test_sstp_servers(servers):
-    selected_servers = []
-    tested_count = 0
+def stop_process(process):
+    if process is None or process.poll() is not None:
+        return
 
-    print()
-    print("========== SSTP SERVER TEST ==========")
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=5)
 
-    for server in servers:
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
 
-        if len(selected_servers) >= TARGET_SERVERS:
-            break
+    except ProcessLookupError:
+        pass
 
-        hostname = str(
-            server.get("sstp_hostname", "")
-        ).strip()
 
-        port = server.get("sstp_port")
-        ip = server.get("ip", "")
+def test_sstp_server(server):
+    hostname = str(
+        server.get("sstp_hostname", "")
+    ).strip()
 
-        if not hostname:
-            continue
+    port = server.get("sstp_port", 443)
 
-        if not isinstance(port, int) or not 1 <= port <= 65535:
-            continue
+    username = str(server.get("username", "vpn"))
+    password = str(server.get("password", "vpn"))
 
-        tested_count += 1
+    if not hostname or not isinstance(port, int):
+        return False
 
-        is_open = check_tcp_port(
-            hostname,
-            port
-        )
+    if not 1 <= port <= 65535:
+        return False
 
-        status = (
-            "OPEN"
-            if is_open
-            else "CLOSED/BLOCKED"
-        )
+    if port != 443:
+        hostname = f"{hostname}:{port}"
 
-        print(
-            f"{tested_count}. "
-            f"{ip} | {hostname}:{port} | {status}"
-        )
+    original_ip = get_public_ip()
 
-        if is_open:
-            selected_servers.append(server)
+    if not original_ip:
+        print("Could not determine original public IP.")
+        return False
 
-            print(
-                "   SELECTED: "
-                "SSTP TCP port is reachable"
-            )
+    command = [
+        "sudo", "-n", "sstpc",
+        "--log-level", "4",
+        "--log-stderr",
+        "--user", username,
+        "--password", password,
+        hostname,
+        "noauth",
+        "require-mschap-v2",
+        "refuse-eap",
+        "refuse-pap",
+        "refuse-chap",
+        "refuse-mschap",
+        "require-mppe",
+        "defaultroute",
+        "replacedefaultroute",
+        "usepeerdns",
+        "nodetach"
+    ]
 
-        print(
-            f"Healthy SSTP servers: "
-            f"{len(selected_servers)}/{TARGET_SERVERS}"
-        )
+    process = None
 
-    print()
-    print("========== SSTP TEST SUMMARY ==========")
+    try:
+        with TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "sstp.log"
 
-    print(f"Total SSTP servers available: {len(servers)}")
-    print(f"Servers tested: {tested_count}")
+            with log_path.open("w", encoding="utf-8") as log_file:
 
-    print(
-        f"Healthy SSTP servers selected: "
-        f"{len(selected_servers)}"
-    )
+                process = subprocess.Popen(
+                    command,
+                    stdout=log_file,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True
+                )
 
-    print(f"Target servers: {TARGET_SERVERS}")
+                start_time = time.monotonic()
 
-    if len(selected_servers) >= TARGET_SERVERS:
-        print("Selection status: TARGET REACHED")
-    else:
-        print("Selection status: NOT ENOUGH HEALTHY SERVERS")
+                while (
+                    time.monotonic() - start_time
+                    < CONNECTION_TIMEOUT
+                ):
 
-    print("=======================================")
+                    if process.poll() is not None:
+                        break
 
-    return selected_servers
+                    time.sleep(2)
+
+                    current_ip = get_public_ip()
+
+                    if (
+                        current_ip
+                        and current_ip != original_ip
+                    ):
+                        print(
+                            f"Original IP: {original_ip}"
+                        )
+                        print(
+                            f"VPN public IP: {current_ip}"
+                        )
+
+                        return True
+
+                if log_path.exists():
+                    print("SSTP connection log:")
+                    print(
+                        log_path.read_text(
+                            encoding="utf-8",
+                            errors="replace"
+                        )[-3000:]
+                    )
+
+                return False
+
+    except Exception as error:
+        print(f"SSTP test error: {error}")
+        return False
+
+    finally:
+        stop_process(process)
 
 
 def save_selected_servers(servers):
@@ -136,7 +186,6 @@ def save_selected_servers(servers):
         "w",
         encoding="utf-8"
     ) as file:
-
         json.dump(
             servers,
             file,
@@ -144,23 +193,62 @@ def save_selected_servers(servers):
             indent=4
         )
 
-    print()
-    print(
-        f"Selected SSTP servers saved: {len(servers)}"
-    )
-
-    print(f"Output file: {OUTPUT_FILE}")
-
 
 def main():
     servers = load_sstp_servers()
 
-    selected = test_sstp_servers(servers)
+    selected = []
+    tested_count = 0
+
+    print()
+    print("========== REAL SSTP CONNECTION TEST ==========")
+
+    for server in servers:
+
+        if len(selected) >= TARGET_SERVERS:
+            break
+
+        if tested_count >= MAX_SERVERS_TO_TEST:
+            break
+
+        tested_count += 1
+
+        hostname = server.get("sstp_hostname", "")
+        ip = server.get("ip", "")
+
+        print()
+        print(
+            f"{tested_count}. Testing {ip} | {hostname}"
+        )
+
+        if test_sstp_server(server):
+            selected.append(server)
+
+            print("RESULT: REAL SSTP CONNECTION CONFIRMED")
+
+        else:
+            print("RESULT: SSTP CONNECTION FAILED")
+
+        print(
+            f"Confirmed connections: "
+            f"{len(selected)}/{TARGET_SERVERS}"
+        )
 
     save_selected_servers(selected)
 
     print()
-    print("SSTP port testing completed.")
+    print("========== SSTP TEST SUMMARY ==========")
+    print(f"Total servers available: {len(servers)}")
+    print(f"Servers tested: {tested_count}")
+    print(f"Real SSTP connections: {len(selected)}")
+    print(f"Target servers: {TARGET_SERVERS}")
+
+    if len(selected) >= TARGET_SERVERS:
+        print("Selection status: TARGET REACHED")
+    else:
+        print("Selection status: NOT ENOUGH VERIFIED SERVERS")
+
+    print("=======================================")
 
 
 if __name__ == "__main__":
