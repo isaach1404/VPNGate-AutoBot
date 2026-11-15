@@ -25,10 +25,7 @@ def get_public_ip():
             headers={"User-Agent": "VPNGate-AutoBot/1.0"}
         )
 
-        with urllib.request.urlopen(
-            request,
-            timeout=5
-        ) as response:
+        with urllib.request.urlopen(request, timeout=5) as response:
             return response.read().decode().strip()
 
     except Exception:
@@ -68,6 +65,21 @@ def stop_process(process):
         pass
 
 
+def print_log(title, path):
+    print()
+    print(f"========== {title} ==========")
+
+    if path.exists():
+        content = path.read_text(
+            encoding="utf-8",
+            errors="replace"
+        )
+
+        print(content[-8000:] if content else "Log file is empty.")
+    else:
+        print("Log file was not created.")
+
+
 def test_sstp_server(server):
     hostname = str(
         server.get("sstp_hostname", "")
@@ -93,34 +105,37 @@ def test_sstp_server(server):
         print("Could not determine original public IP.")
         return False
 
-    command = [
-        "sudo", "-n", "sstpc",
-        "--log-level", "4",
-        "--log-stderr",
-        "--user", username,
-        "--password", password,
-        hostname,
-        "noauth",
-        "require-mschap-v2",
-        "refuse-eap",
-        "refuse-pap",
-        "refuse-chap",
-        "refuse-mschap",
-        "require-mppe",
-        "defaultroute",
-        "replacedefaultroute",
-        "usepeerdns",
-        "nodetach"
-    ]
-
     process = None
 
     try:
         with TemporaryDirectory() as temp_dir:
-            log_path = Path(temp_dir) / "sstp.log"
+            sstp_log = Path(temp_dir) / "sstp.log"
+            ppp_log = Path(temp_dir) / "pppd.log"
 
-            with log_path.open("w", encoding="utf-8") as log_file:
+            command = [
+                "sudo", "-n", "sstpc",
+                "--log-level", "4",
+                "--log-stderr",
+                "--user", username,
+                "--password", password,
+                hostname,
+                "--",
+                "debug",
+                "logfile", str(ppp_log),
+                "noauth",
+                "require-mschap-v2",
+                "refuse-eap",
+                "refuse-pap",
+                "refuse-chap",
+                "refuse-mschap",
+                "require-mppe",
+                "defaultroute",
+                "replacedefaultroute",
+                "usepeerdns",
+                "nodetach"
+            ]
 
+            with sstp_log.open("w", encoding="utf-8") as log_file:
                 process = subprocess.Popen(
                     command,
                     stdout=log_file,
@@ -134,7 +149,6 @@ def test_sstp_server(server):
                     time.monotonic() - start_time
                     < CONNECTION_TIMEOUT
                 ):
-
                     if process.poll() is not None:
                         break
 
@@ -142,27 +156,17 @@ def test_sstp_server(server):
 
                     current_ip = get_public_ip()
 
-                    if (
-                        current_ip
-                        and current_ip != original_ip
-                    ):
-                        print(
-                            f"Original IP: {original_ip}"
-                        )
-                        print(
-                            f"VPN public IP: {current_ip}"
-                        )
+                    if current_ip and current_ip != original_ip:
+                        print(f"Original IP: {original_ip}")
+                        print(f"VPN public IP: {current_ip}")
+
+                        print_log("PPP DIAGNOSTIC LOG", ppp_log)
+                        print_log("SSTP LOG", sstp_log)
 
                         return True
 
-                if log_path.exists():
-                    print("SSTP connection log:")
-                    print(
-                        log_path.read_text(
-                            encoding="utf-8",
-                            errors="replace"
-                        )[-3000:]
-                    )
+                print_log("PPP DIAGNOSTIC LOG", ppp_log)
+                print_log("SSTP LOG", sstp_log)
 
                 return False
 
@@ -176,16 +180,9 @@ def test_sstp_server(server):
 
 def save_selected_servers(servers):
     output_path = Path(OUTPUT_FILE)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    output_path.parent.mkdir(
-        parents=True,
-        exist_ok=True
-    )
-
-    with output_path.open(
-        "w",
-        encoding="utf-8"
-    ) as file:
+    with output_path.open("w", encoding="utf-8") as file:
         json.dump(
             servers,
             file,
@@ -204,7 +201,6 @@ def main():
     print("========== REAL SSTP CONNECTION TEST ==========")
 
     for server in servers:
-
         if len(selected) >= TARGET_SERVERS:
             break
 
@@ -217,15 +213,11 @@ def main():
         ip = server.get("ip", "")
 
         print()
-        print(
-            f"{tested_count}. Testing {ip} | {hostname}"
-        )
+        print(f"{tested_count}. Testing {ip} | {hostname}")
 
         if test_sstp_server(server):
             selected.append(server)
-
             print("RESULT: REAL SSTP CONNECTION CONFIRMED")
-
         else:
             print("RESULT: SSTP CONNECTION FAILED")
 
