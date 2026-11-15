@@ -79,6 +79,18 @@ jobs:
       - name: Fetch SSTP servers
         run: python src/sstp_fetcher.py
 
+      - name: Prepare PPP authentication
+        run: |
+          echo "Preparing PPP authentication files..."
+
+          echo "vpn * vpn *" | sudo tee /etc/ppp/chap-secrets
+          echo "vpn * vpn *" | sudo tee /etc/ppp/pap-secrets
+
+          sudo chmod 600 /etc/ppp/chap-secrets
+          sudo chmod 600 /etc/ppp/pap-secrets
+
+          echo "PPP authentication files prepared."
+
       - name: Test SSTP servers
         run: python src/sstp_tester.py
 
