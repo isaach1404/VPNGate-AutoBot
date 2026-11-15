@@ -25,10 +25,7 @@ def get_public_ip():
             headers={"User-Agent": "VPNGate-AutoBot/1.0"}
         )
 
-        with urllib.request.urlopen(
-            request,
-            timeout=5
-        ) as response:
+        with urllib.request.urlopen(request, timeout=5) as response:
             return response.read().decode().strip()
 
     except Exception:
@@ -130,7 +127,6 @@ def test_sstp_server(server):
                 "refuse-pap",
                 "refuse-chap",
                 "refuse-mschap",
-                "require-mppe",
                 "defaultroute",
                 "replacedefaultroute",
                 "usepeerdns",
