@@ -2,6 +2,8 @@
 import csv
 import io
 import json
+import os
+import time
 import urllib.request
 import sys
 
@@ -18,11 +20,53 @@ TARGET_HEALTHY_SERVERS = 10
 SELECTED_SERVERS_FILE = "output/selected_servers.json"
 
 
+def get_env_int(name, default):
+    try:
+        return int(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_SERVERS_TO_TEST = get_env_int(
+    "MAX_SERVERS_TO_TEST", 40
+)
+
+MAX_TEST_SECONDS = get_env_int(
+    "MAX_TEST_SECONDS", 600
+)
+
+
 def get_number(value):
     try:
         return int(value)
     except (ValueError, TypeError):
         return 0
+
+
+def is_healthy(result):
+
+    if result["config_status"] != "valid":
+        return False
+
+    # UDP has no TCP port to probe; the real connection test
+    # is the only reliable check for those servers.
+    if (
+        result["protocol"].startswith("tcp")
+        and result["port_status"] != "open"
+    ):
+        return False
+
+    if result["connection_status"] != "connected":
+        return False
+
+    before = result["public_ip_before"]
+    after = result["public_ip_after"]
+
+    return (
+        before is not None
+        and after is not None
+        and before != after
+    )
 
 
 def fetch_servers():
@@ -95,21 +139,44 @@ def fetch_servers():
 
 def test_all_servers(
     servers,
-    target_count=TARGET_HEALTHY_SERVERS
+    target_count=TARGET_HEALTHY_SERVERS,
+    max_tested=MAX_SERVERS_TO_TEST,
+    max_seconds=MAX_TEST_SECONDS
 ):
 
     print()
     print("========== REAL OPENVPN SERVER SELECTION ==========")
+    print(
+        f"Limits: {max_tested} servers / "
+        f"{max_seconds}s wall clock / "
+        f"{target_count} healthy target"
+    )
 
     selected_servers = []
     tested_count = 0
+
+    deadline = time.monotonic() + max_seconds
 
     for server in servers:
 
         if len(selected_servers) >= target_count:
             break
 
+        if tested_count >= max_tested:
+            print(
+                f"Reached test limit ({max_tested} servers)."
+            )
+            break
+
+        if time.monotonic() > deadline:
+
+            print(
+                "Reached time limit; stopping test run."
+            )
+            break
+
         result = test_server(server)
+
         tested_count += 1
 
         print()
@@ -125,17 +192,7 @@ def test_all_servers(
             f"VPN Connection: {result['connection_status']}"
         )
 
-        is_healthy = (
-            result["config_status"] == "valid"
-            and "tcp" in result["protocol"]
-            and result["port_status"] == "open"
-            and result["connection_status"] == "connected"
-            and result["public_ip_before"] is not None
-            and result["public_ip_after"] is not None
-            and result["public_ip_before"] != result["public_ip_after"]
-        )
-
-        if is_healthy:
+        if is_healthy(result):
 
             selected_servers.append({
                 "server": server,

@@ -9,11 +9,15 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: vpn-gate-scanner
+  cancel-in-progress: false
+
 jobs:
   scan:
     name: Fetch VPN Gate Servers
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Download project files
@@ -75,10 +79,17 @@ jobs:
           echo "SSTP package information:"
           apt-cache policy sstp-client
 
+      # continue-on-error keeps one failing half of the scan from
+      # blocking delivery of whatever the other half found.
       - name: Run VPN Gate API scanner
+        continue-on-error: true
+        env:
+          MAX_SERVERS_TO_TEST: "40"
+          MAX_TEST_SECONDS: "600"
         run: python src/vpngate_api.py
 
       - name: Fetch SSTP servers
+        continue-on-error: true
         run: python src/sstp_fetcher.py
 
       - name: Prepare PPP authentication
@@ -94,7 +105,21 @@ jobs:
           echo "PPP authentication files prepared."
 
       - name: Test SSTP servers
+        continue-on-error: true
         run: python src/sstp_tester.py
+
+      - name: Collect run summary
+        if: always()
+        run: |
+          echo "========== OUTPUT FILES =========="
+          ls -la output/ 2>&1 || true
+
+          for file in output/selected_servers.json output/selected_sstp_servers.json; do
+            if [ -f "$file" ]; then
+              echo "--- $file ---"
+              python -c "import json,sys; print('entries:', len(json.load(open('$file'))))" || true
+            fi
+          done
 
       - name: Send OpenVPN and SSTP servers to Telegram
         env:
@@ -103,35 +128,38 @@ jobs:
         run: python src/telegram_sender.py
 
       - name: Package OpenVPN files
+        if: always()
         run: |
           if [ -d output/openvpn ] && [ "$(find output/openvpn -name '*.ovpn' -type f | wc -l)" -gt 0 ]; then
             cd output
             zip -r ../vpngate-openvpn-configs.zip openvpn
           else
             echo "No OpenVPN configuration files were generated."
-            exit 1
           fi
 
       - name: Upload OpenVPN package
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vpngate-openvpn-configs
           path: vpngate-openvpn-configs.zip
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Upload selected OpenVPN servers
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vpngate-selected-servers
           path: output/selected_servers.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Upload selected SSTP servers
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: vpngate-selected-sstp-servers
           path: output/selected_sstp_servers.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7

@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+import time
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -10,6 +11,11 @@ from html import escape
 
 OPENVPN_FILE = Path("output/selected_servers.json")
 SSTP_FILE = Path("output/selected_sstp_servers.json")
+
+# Telegram rejects messages longer than 4096 characters.
+TELEGRAM_MAX_LENGTH = 3800
+
+RETRY_DELAYS = [5, 15, 30]
 
 
 def send_telegram_message(message):
@@ -30,35 +36,63 @@ def send_telegram_message(message):
 
     data = json.dumps(payload).encode("utf-8")
 
-    request = urllib.request.Request(
-        url,
-        data=data,
-        headers={"Content-Type": "application/json"},
-        method="POST"
-    )
+    last_error = None
 
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            result = json.loads(response.read().decode("utf-8"))
+    for attempt in range(len(RETRY_DELAYS) + 1):
 
-        if not result.get("ok"):
-            raise RuntimeError("Telegram API rejected the message.")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
 
-        print("Telegram message sent successfully.")
-        return True
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                result = json.loads(response.read().decode("utf-8"))
 
-    except urllib.error.HTTPError as error:
-        print(f"Telegram HTTP error: {error.code}")
-        raise
+            if not result.get("ok"):
+                raise RuntimeError(
+                    "Telegram API rejected the message."
+                )
 
-    except urllib.error.URLError:
-        print("Could not connect to Telegram API.")
-        raise
+            print("Telegram message sent successfully.")
+            return True
+
+        except urllib.error.HTTPError as error:
+
+            last_error = error
+
+            # 429 = rate limited; retrying is expected.
+            if error.code != 429:
+                print(f"Telegram HTTP error: {error.code}")
+                raise
+
+            print("Telegram rate limit hit; will retry.")
+
+        except urllib.error.URLError as error:
+
+            last_error = error
+            print("Could not connect to Telegram API.")
+
+        if attempt < len(RETRY_DELAYS):
+            time.sleep(RETRY_DELAYS[attempt])
+
+    print(f"Telegram delivery failed: {last_error}")
+    return False
 
 
-def load_servers(file_path):
+def load_servers(file_path, required=True):
+
     if not file_path.exists():
-        raise FileNotFoundError(f"Server list not found: {file_path}")
+
+        if required:
+            raise FileNotFoundError(
+                f"Server list not found: {file_path}"
+            )
+
+        print(f"WARNING: server list missing: {file_path}")
+        return []
 
     with file_path.open("r", encoding="utf-8") as file:
         servers = json.load(file)
@@ -144,21 +178,69 @@ def create_server_message(openvpn_servers, sstp_servers):
     return "\n".join(lines)
 
 
+def split_message(message, max_length=TELEGRAM_MAX_LENGTH):
+    """Split on line boundaries so HTML tags stay intact."""
+
+    if len(message) <= max_length:
+        return [message]
+
+    chunks = []
+    current = []
+
+    for line in message.split("\n"):
+
+        candidate_length = len("\n".join(current + [line]))
+
+        if current and candidate_length > max_length:
+            chunks.append("\n".join(current))
+            current = [line]
+
+        else:
+            current.append(line)
+
+    if current:
+        chunks.append("\n".join(current))
+
+    return chunks
+
+
 def main():
-    openvpn_servers = load_servers(OPENVPN_FILE)
-    sstp_servers = load_servers(SSTP_FILE)
+    openvpn_servers = load_servers(OPENVPN_FILE, required=False)
+    sstp_servers = load_servers(SSTP_FILE, required=False)
+
+    if not openvpn_servers and not sstp_servers:
+        print("No healthy servers in either list; nothing to send.")
+        return
 
     message = create_server_message(
         openvpn_servers,
         sstp_servers
     )
 
-    send_telegram_message(message)
+    chunks = split_message(message)
+
+    print(
+        f"Sending {len(chunks)} Telegram message(s)."
+    )
+
+    for index, chunk in enumerate(chunks, start=1):
+
+        if len(chunks) > 1:
+            chunk = (
+                f"<i>Part {index}/{len(chunks)}</i>\n\n"
+                + chunk
+            )
+
+        if not send_telegram_message(chunk):
+            raise RuntimeError(
+                f"Telegram delivery failed at part {index}."
+            )
 
     print()
     print("========== TELEGRAM SUMMARY ==========")
     print(f"OpenVPN servers sent: {len(openvpn_servers)}")
     print(f"SSTP servers sent: {len(sstp_servers)}")
+    print(f"Messages sent: {len(chunks)}")
     print("Telegram delivery completed successfully.")
     print("======================================")
 
