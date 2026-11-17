@@ -1,0 +1,28 @@
+
+name: Temp Rubika Reachability
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe Rubika API
+        env:
+          RUBIKA_BOT_TOKEN: ${{ secrets.RUBIKA_BOT_TOKEN }}
+        run: |
+          echo "--- DNS ---"
+          getent hosts botapi.rubika.ir || echo "DNS FAILED"
+          echo "--- TCP 443 ---"
+          timeout 15 bash -c '</dev/tcp/botapi.rubika.ir/443' \
+            && echo "TCP OK" || echo "TCP FAILED"
+          echo "--- getMe ---"
+          curl -sS -m 40 -w "\nHTTP=%{http_code} time=%{time_total}s\n" \
+            -X POST -H "Content-Type: application/json" \
+            "https://botapi.rubika.ir/v3/${RUBIKA_BOT_TOKEN}/getMe" \
+            -d '{}' || echo "CURL FAILED"
