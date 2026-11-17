@@ -267,22 +267,17 @@ def create_sstp_section(servers):
 
         lines.append(heading)
 
-        details = []
-
         if row["country"]:
-            details.append(row["country"])
+            lines.append(f"-{row['country']}")
 
         if row["ip"]:
-            details.append(f"IP: {row['ip']}")
+            lines.append(f"-IP: {row['ip']}")
 
-        details.append(f"uptime {row['days'] or 0}d")
+        lines.append(f"-uptime {row['days'] or 0}d")
 
-        details.append(
-            f"{row['sessions'] or 0} {row['session_label']}"
+        lines.append(
+            f"-{row['sessions'] or 0} {row['session_label']}"
         )
-
-        if details:
-            lines.append(f"   {' · '.join(details)}")
 
     return lines
 

@@ -31,6 +31,7 @@ probes alone are not treated as proof.
 | `src/delivery.py` | Shared config lookup and report rows for every messenger |
 | `src/telegram_sender.py` | Uploads one `.ovpn` per message, then the SSTP list |
 | `src/rubika_sender.py` | Delivers the same files and list to Rubika |
+| `src/rubika_chat_id.py` | Prints the chat ids a Rubika bot has seen, for first-time setup |
 
 ## Telegram output
 
@@ -40,9 +41,23 @@ details — country, IP, protocol and port, uptime in days, and the live session
 count — using only what the VPN Gate site itself shows.
 
 SSTP follows as **one message listing every host**, each with its destination
-details beneath the hostname: country, IP, uptime and session count. Username
-and password are shown only when they differ from `vpn` / `vpn`, and the port
-only when it is not `443`.
+details on their own lines beneath the hostname:
+
+```
+1. vpn520583431.opengw.net (port 1425)
+-RU
+-IP: 77.35.53.103
+-uptime 4.0d
+-10 sessions
+2. public-vpn-118.opengw.net
+-JP
+-IP: 219.100.37.87
+-uptime 24.0d
+-92 sessions
+```
+
+Username and password are shown only when they differ from `vpn` / `vpn`, and
+the port only when it is not `443`.
 
 A run produces **one notification**. The first message notifies; every file and
 list after it is sent silently, so a run with ten configs still buzzes once.
@@ -67,6 +82,36 @@ each config, then sends the returned `file_id` to the chat.
 Both messengers are independent: a Rubika failure never blocks Telegram, and
 each raises a non-zero exit when it delivers nothing at all, so a broken token
 shows up in the run instead of passing silently.
+
+#### Connecting Rubika
+
+Rubika has **no `getChats` method**, so a chat id cannot be looked up — it is
+only revealed through an update the bot receives. Getting connected therefore
+takes three steps:
+
+1. Create the bot with [@BotFather](https://rubika.ir/botfather) and copy its
+   token.
+2. **Send the bot a message** in Rubika — open a chat with it and say anything.
+   For a group or channel, add the bot there and post once.
+3. Find the resulting chat id:
+
+```bash
+python src/rubika_chat_id.py <token>
+```
+
+It prints every chat id the bot has seen, labelled `private` (`b…`), `group`
+(`g…`) or `channel` (`c…`). Pick the one you want and store it.
+
+Add both to GitHub under Settings → Secrets and variables → Actions:
+
+| Secret | Value |
+| --- | --- |
+| `RUBIKA_BOT_TOKEN` | the token from step 1 |
+| `RUBIKA_CHAT_ID` | the id printed in step 3 |
+
+The next run delivers to Rubika after Telegram. Until both exist the step
+prints that it is skipping and exits cleanly; a run that *does* send but
+delivers nothing fails instead, so a wrong token is visible.
 
 ## Schedule
 
