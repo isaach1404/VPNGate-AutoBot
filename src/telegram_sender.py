@@ -22,7 +22,7 @@ from delivery import (
 
 # Telegram rejects messages longer than 4096 characters.
 TELEGRAM_MAX_LENGTH = 3800
-CAPTION_MAX_LENGTH = 1000
+CAPTION_MAX_LENGTH = 1024
 
 RETRY_DELAYS = [5, 15, 30]
 
@@ -130,9 +130,13 @@ def send_telegram_message(message):
 def send_telegram_document(path, caption):
     _, chat_id = get_token_and_chat()
 
-    # Captions are capped separately from message length.
+    # Captions are capped separately from message length; refuse
+    # rather than send a truncated, tag-unbalanced caption.
     if len(caption) > CAPTION_MAX_LENGTH:
-        caption = caption[:CAPTION_MAX_LENGTH - 3] + "..."
+        raise ValueError(
+            f"Caption is {len(caption)} characters, over the "
+            f"{CAPTION_MAX_LENGTH} limit."
+        )
 
     result = call_api(
         "sendDocument",
@@ -158,33 +162,21 @@ def openvpn_line(row):
     details = []
 
     if row["days"]:
-        details.append(f"{row['days']}d up")
+        details.append(f"{row['days']}d")
 
     if row["sessions"]:
-        details.append(
-            f"{row['sessions']} {row['session_label']}"
-        )
+        details.append(f"{row['sessions']}s")
 
-    suffix = (
-        f" ({', '.join(details)})" if details else ""
-    )
+    suffix = f" {escape(' · '.join(details))}" if details else ""
 
     return (
-        f"{row['index']}. {escape(row['country'])} "
-        f"<code>{escape(row['ip'])}</code>"
-        f"{escape(suffix)}"
+        f"{row['index']}.{escape(row['country'])} "
+        f"<code>{escape(row['ip'])}</code>{suffix}"
     )
 
 
 def create_openvpn_section(servers):
-    lines = [
-        "<b>OPENVPN</b>",
-        (
-            f"{len(servers)} configs in one file. "
-            "Tap it, then open with your OpenVPN app."
-        ),
-        ""
-    ]
+    lines = ["<b>OPENVPN</b>"]
 
     for row in openvpn_rows(servers):
         lines.append(openvpn_line(row))
@@ -195,11 +187,7 @@ def create_openvpn_section(servers):
 def create_sstp_section(servers):
     """Hostnames only, tappable to copy."""
 
-    lines = [
-        "<b>SSTP</b>",
-        f"{len(servers)} hosts",
-        ""
-    ]
+    lines = ["<b>SSTP</b>"]
 
     if not servers:
         lines.append("No reachable SSTP servers found.")
@@ -231,15 +219,31 @@ def create_sstp_section(servers):
 
 
 def create_report(openvpn_servers, sstp_servers):
-    lines = ["<b>VPN Gate - Healthy Servers</b>", ""]
+    """Everything in one caption, so a run sends one notification."""
+
+    lines = [
+        (
+            f"<b>VPN Gate</b> {len(openvpn_servers)} OVPN · "
+            f"{len(sstp_servers)} SSTP"
+        )
+    ]
 
     if openvpn_servers:
         lines.extend(create_openvpn_section(openvpn_servers))
-        lines.append("")
 
     lines.extend(create_sstp_section(sstp_servers))
 
     return "\n".join(lines)
+
+
+def create_short_caption(openvpn_servers):
+    """Used only when the full report is too long for a caption."""
+
+    return "\n".join([
+        "<b>VPN Gate - OpenVPN configs</b>",
+        f"{len(openvpn_servers)} verified servers in this file.",
+        "Tap it, then open with your OpenVPN app."
+    ])
 
 
 def split_message(message, max_length=TELEGRAM_MAX_LENGTH):
@@ -295,26 +299,30 @@ def main():
 
     if archive is not None:
 
-        caption = (
-            f"<b>OpenVPN configs</b> - "
-            f"{len(openvpn_servers) - len(missing)} "
-            "servers, verified working"
-        )
+        # The whole report rides along as the caption, so the run
+        # produces exactly one notification.
+        if len(report) <= CAPTION_MAX_LENGTH:
 
-        ok = send_telegram_document(archive, caption)
+            if send_telegram_document(archive, report):
+                delivered += 1
+
+        else:
+            if send_telegram_document(
+                archive, create_short_caption(openvpn_servers)
+            ):
+                delivered += 1
+
+            for chunk in split_message(report):
+
+                if send_telegram_message(chunk):
+                    delivered += 1
 
     else:
-        ok = send_telegram_message(
-            "\n".join(split_message(report)[0:1])
-        )
 
-    if ok:
-        delivered += 1
+        for chunk in split_message(report):
 
-    for chunk in split_message(report):
-
-        if send_telegram_message(chunk):
-            delivered += 1
+            if send_telegram_message(chunk):
+                delivered += 1
 
     print()
     print("========== TELEGRAM SUMMARY ==========")
