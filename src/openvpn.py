@@ -1,7 +1,10 @@
 
 import base64
 import re
+
 from pathlib import Path
+
+from delivery import config_filename
 
 
 def safe_filename(value):
@@ -82,15 +85,13 @@ def generate_openvpn_configs(
                 skipped_servers += 1
                 continue
 
-            country = safe_filename(
-                server.get("CountryShort", "Unknown")
+            filename = config_filename(
+                safe_filename(
+                    server.get("CountryShort", "Unknown")
+                ),
+                safe_filename(server.get("IP", "Unknown")),
+                safe_filename(server.get("HostName", ""))
             )
-
-            ip = safe_filename(
-                server.get("IP", "Unknown")
-            )
-
-            filename = f"{country}_{ip}.ovpn"
 
             file_path = output_path / filename
 

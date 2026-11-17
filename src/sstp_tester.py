@@ -17,6 +17,61 @@ TARGET_SERVERS = 10
 MAX_SERVERS_TO_TEST = 20
 CONNECTION_TIMEOUT = 30
 
+# Total wall clock budget for the whole run, so the CI job
+# never sits on a dead server list.
+MAX_TEST_SECONDS = 480
+
+PPP_UNIT = 0
+PPP_INTERFACE = f"ppp{PPP_UNIT}"
+
+PREFERRED_COUNTRIES = ["RU", "JP", "US"]
+
+
+def order_by_country_variety(servers):
+    """Interleave countries so one cannot fill every slot."""
+
+    groups = {}
+
+    for server in servers:
+
+        code = str(
+            server.get("country", "")
+        ).strip().upper() or "??"
+
+        groups.setdefault(code, []).append(server)
+
+    order = [c for c in PREFERRED_COUNTRIES if c in groups]
+    order.extend(c for c in groups if c not in order)
+
+    ordered = []
+
+    while any(groups.get(c) for c in order):
+
+        for code in order:
+
+            bucket = groups.get(code)
+
+            if bucket:
+                ordered.append(bucket.pop(0))
+
+    return ordered
+
+
+def run_command(command, timeout=15, check=False):
+
+    try:
+        return subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            text=True,
+            check=check
+        )
+
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
 
 def get_public_ip():
     try:
@@ -30,6 +85,36 @@ def get_public_ip():
 
     except Exception:
         return None
+
+
+def get_tunnel_public_ip():
+    """Public IP as seen from inside the SSTP tunnel.
+
+    SO_BINDTODEVICE (curl --interface) forces the request out of
+    the PPP interface without touching the default route, so the
+    runner keeps its own connectivity.
+    """
+
+    result = run_command(
+        [
+            "sudo", "-n",
+            "curl", "-s",
+            "--max-time", "10",
+            "--interface", PPP_INTERFACE,
+            "https://api.ipify.org"
+        ],
+        timeout=15
+    )
+
+    if result is None or result.returncode != 0:
+        return None
+
+    value = result.stdout.strip()
+
+    if not value or len(value) > 64 or " " in value:
+        return None
+
+    return value
 
 
 def load_sstp_servers():
@@ -63,6 +148,20 @@ def stop_process(process):
 
     except ProcessLookupError:
         pass
+
+
+def cleanup_ppp_interface():
+
+    run_command(
+        ["sudo", "-n", "ip", "link", "delete", PPP_INTERFACE],
+        timeout=10
+    )
+
+    # pppd may leave the unit busy if sstpc was killed hard.
+    run_command(
+        ["sudo", "-n", "pkill", "-f", f"pppd.*{PPP_INTERFACE}"],
+        timeout=10
+    )
 
 
 def print_log(title, path):
@@ -112,6 +211,16 @@ def test_sstp_server(server):
             sstp_log = Path(temp_dir) / "sstp.log"
             ppp_log = Path(temp_dir) / "pppd.log"
 
+            # No defaultroute / replacedefaultroute here: the runner
+            # only needs the PPP interface to exist so the public-IP
+            # check can be pinned to it with SO_BINDTODEVICE.
+            #
+            # Do not require the peer to authenticate: VPN Gate
+            # servers never authenticate to the client, and demanding
+            # it (require-mschap-v2) makes pppd drop the link with
+            # "peer refused to authenticate". The refuse-* options are
+            # omitted too, so pppd answers whatever challenge the
+            # server picks using /etc/ppp/{chap,pap}-secrets.
             command = [
                 "sudo", "-n", "sstpc",
                 "--log-level", "4",
@@ -122,17 +231,11 @@ def test_sstp_server(server):
                 "--",
                 "debug",
                 "logfile", str(ppp_log),
+                "unit", str(PPP_UNIT),
                 "noccp",
                 "novj",
                 "noipv6",
-                "require-mschap-v2",
-                "refuse-eap",
-                "refuse-pap",
-                "refuse-chap",
-                "refuse-mschap",
-                "defaultroute",
-                "replacedefaultroute",
-                "usepeerdns",
+                "nodefaultroute",
                 "nodetach",
                 "noauth"
             ]
@@ -159,20 +262,18 @@ def test_sstp_server(server):
                     if process.poll() is not None:
                         break
 
-                    time.sleep(2)
+                    time.sleep(3)
 
-                    current_ip = get_public_ip()
+                    tunnel_ip = get_tunnel_public_ip()
 
-                    if (
-                        current_ip
-                        and current_ip != original_ip
-                    ):
+                    if tunnel_ip and tunnel_ip != original_ip:
+
                         print(
                             f"Original IP: {original_ip}"
                         )
 
                         print(
-                            f"VPN public IP: {current_ip}"
+                            f"VPN public IP: {tunnel_ip}"
                         )
 
                         print_log(
@@ -229,13 +330,22 @@ def save_selected_servers(servers):
 
 
 def main():
-    servers = load_sstp_servers()
+    servers = order_by_country_variety(
+        load_sstp_servers()
+    )
 
     selected = []
     tested_count = 0
 
+    deadline = time.monotonic() + MAX_TEST_SECONDS
+
     print()
     print("========== REAL SSTP CONNECTION TEST ==========")
+    print(
+        f"Limits: {MAX_SERVERS_TO_TEST} servers / "
+        f"{MAX_TEST_SECONDS}s wall clock / "
+        f"{TARGET_SERVERS} target"
+    )
 
     for server in servers:
 
@@ -243,6 +353,13 @@ def main():
             break
 
         if tested_count >= MAX_SERVERS_TO_TEST:
+            print(
+                f"Reached test limit ({MAX_SERVERS_TO_TEST} servers)."
+            )
+            break
+
+        if time.monotonic() > deadline:
+            print("Reached time limit; stopping test run.")
             break
 
         tested_count += 1
@@ -255,17 +372,21 @@ def main():
             f"{tested_count}. Testing {ip} | {hostname}"
         )
 
-        if test_sstp_server(server):
-            selected.append(server)
+        try:
+            if test_sstp_server(server):
+                selected.append(server)
 
-            print(
-                "RESULT: REAL SSTP CONNECTION CONFIRMED"
-            )
+                print(
+                    "RESULT: REAL SSTP CONNECTION CONFIRMED"
+                )
 
-        else:
-            print(
-                "RESULT: SSTP CONNECTION FAILED"
-            )
+            else:
+                print(
+                    "RESULT: SSTP CONNECTION FAILED"
+                )
+
+        finally:
+            cleanup_ppp_interface()
 
         print(
             f"Confirmed connections: "

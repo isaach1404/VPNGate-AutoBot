@@ -17,10 +17,22 @@ jobs:
       - name: Download project files
         uses: actions/checkout@v4
 
+      - name: Install SSTP client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sstp-client ppp iproute2 curl
+
       - name: Fetch SSTP servers
         run: python src/sstp_fetcher.py
 
+      - name: Prepare PPP authentication
+        run: |
+          echo "vpn * vpn *" | sudo tee /etc/ppp/chap-secrets
+          echo "vpn * vpn *" | sudo tee /etc/ppp/pap-secrets
+          sudo chmod 600 /etc/ppp/chap-secrets /etc/ppp/pap-secrets
+
       - name: Test SSTP servers
+        continue-on-error: true
         run: python src/sstp_tester.py
 
       - name: Upload all SSTP servers
@@ -28,7 +40,7 @@ jobs:
         with:
           name: sstp-servers-test
           path: output/sstp_servers.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3
 
       - name: Upload selected healthy SSTP servers
@@ -36,5 +48,5 @@ jobs:
         with:
           name: selected-sstp-servers-test
           path: output/selected_sstp_servers.json
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 3

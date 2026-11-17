@@ -134,6 +134,21 @@ def check_tcp_port(host, port, timeout=3):
         return False
 
 
+def run_command(command, timeout=15):
+
+    try:
+        return subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+            text=True
+        )
+
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+
+
 def get_public_ip():
 
     urls = [
@@ -166,6 +181,30 @@ def get_public_ip():
             continue
 
     return None
+
+
+def get_tunnel_public_ip(interface):
+
+    result = run_command(
+        [
+            "sudo", "-n",
+            "curl", "-s",
+            "--max-time", "10",
+            "--interface", interface,
+            "https://api.ipify.org"
+        ],
+        timeout=15
+    )
+
+    if result is None or result.returncode != 0:
+        return None
+
+    value = result.stdout.strip()
+
+    if not value or len(value) > 64 or " " in value:
+        return None
+
+    return value
 
 
 def stop_openvpn(process):
@@ -268,6 +307,12 @@ def test_openvpn_connection(
             if stripped.startswith("log "):
                 continue
 
+            # Keep the runner's own traffic on its normal route;
+            # only the public-IP check endpoints go through the
+            # tunnel. A full redirect would drop the CI connection.
+            if stripped.startswith("redirect-gateway"):
+                continue
+
             config_lines.append(line)
 
         credentials_path.write_text(
@@ -284,6 +329,8 @@ def test_openvpn_connection(
 
         os.chmod(config_path, 0o600)
 
+        device = f"vpngate{os.getpid() % 1000}"
+
         command = [
             "sudo",
             "-n",
@@ -293,12 +340,31 @@ def test_openvpn_connection(
             "--auth-user-pass",
             str(credentials_path),
             "--auth-nocache",
-            "--redirect-gateway",
-            "def1",
+            "--dev",
+            device,
+            "--dev-type",
+            "tun",
             "--connect-retry-max",
             "1",
             "--connect-timeout",
             "10",
+            # The runner keeps its own default route; the tunnel is
+            # only used for the interface-bound public-IP check.
+            "--pull-filter",
+            "ignore",
+            "redirect-gateway",
+            "--pull-filter",
+            "ignore",
+            "dhcp-option DNS",
+            "--pull-filter",
+            "ignore",
+            "block-outside-dns",
+            # VPN Gate configs pin legacy ciphers that OpenVPN 2.6+
+            # refuses by default.
+            "--data-ciphers",
+            "AES-128-CBC:AES-256-CBC:AES-192-CBC:AES-128-GCM:AES-256-GCM:CHACHA20-POLY1305",
+            "--data-ciphers-fallback",
+            "AES-128-CBC",
             "--verb",
             "3"
         ]
@@ -355,7 +421,16 @@ def test_openvpn_connection(
 
         time.sleep(2)
 
-        public_ip_after = get_public_ip()
+        public_ip_after = None
+
+        for _ in range(5):
+
+            public_ip_after = get_tunnel_public_ip(device)
+
+            if public_ip_after:
+                break
+
+            time.sleep(1)
 
         if not public_ip_after:
 
@@ -440,21 +515,24 @@ def test_server(server):
     result["protocol"] = details["protocol"]
     result["port"] = details["port"]
 
-    if "tcp" not in details["protocol"]:
-        result["port_status"] = "not_tested_udp"
-        return result
+    # UDP has no port to probe; the real connection test below is
+    # the only meaningful check for those servers.
+    if "tcp" in details["protocol"]:
 
-    result["port_status"] = (
-        "open"
-        if check_tcp_port(
-            details["host"],
-            details["port"]
+        result["port_status"] = (
+            "open"
+            if check_tcp_port(
+                details["host"],
+                details["port"]
+            )
+            else "closed_or_blocked"
         )
-        else "closed_or_blocked"
-    )
 
-    if result["port_status"] != "open":
-        return result
+        if result["port_status"] != "open":
+            return result
+
+    else:
+        result["port_status"] = "not_tested_udp"
 
     connection_result = test_openvpn_connection(server)
 

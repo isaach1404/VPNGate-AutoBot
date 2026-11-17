@@ -21,6 +21,7 @@ class VPNGateSSTPParser(HTMLParser):
 
         self.in_row = False
         self.row_parts = []
+        self.row_country = ""
         self.servers = []
 
     def handle_starttag(self, tag, attrs):
@@ -28,6 +29,30 @@ class VPNGateSSTPParser(HTMLParser):
         if tag.lower() == "tr" and not self.in_row:
             self.in_row = True
             self.row_parts = []
+            self.row_country = ""
+            return
+
+        if not self.in_row or tag.lower() != "img":
+            return
+
+        # The country is a flag image placed next to the hostname,
+        # e.g. src='../images/flags/JP.png'. The flag icons in the
+        # site header use a /16/ subdirectory and are skipped.
+        if self.row_country:
+            return
+
+        for name, value in attrs:
+
+            if name.lower() != "src" or not value:
+                continue
+
+            match = re.search(
+                r"images/flags/([A-Za-z]{2})\.\w+$",
+                value
+            )
+
+            if match:
+                self.row_country = match.group(1).upper()
 
     def handle_data(self, data):
 
@@ -90,10 +115,31 @@ class VPNGateSSTPParser(HTMLParser):
         except ValueError:
             return
 
+        sessions_match = re.search(
+            r"(\d[\d,]*)\s+sessions",
+            row_text,
+            re.IGNORECASE
+        )
+
+        uptime_match = re.search(
+            r"(\d[\d,]*)\s+days",
+            row_text,
+            re.IGNORECASE
+        )
+
         self.servers.append({
             "ip": ip,
             "sstp_hostname": hostname,
             "sstp_port": port,
+            "country": self.row_country,
+            "sessions": (
+                int(sessions_match.group(1).replace(",", ""))
+                if sessions_match else 0
+            ),
+            "uptime_days": (
+                float(uptime_match.group(1).replace(",", ""))
+                if uptime_match else 0
+            ),
             "username": "vpn",
             "password": "vpn"
         })
