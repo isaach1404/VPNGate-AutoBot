@@ -102,6 +102,11 @@ python src/rubika_chat_id.py <token>
 It prints every chat id the bot has seen, labelled `private` (`b…`), `group`
 (`g…`) or `channel` (`c…`). Pick the one you want and store it.
 
+A **channel** id only works while the bot is an admin there with *Send
+messages*. If that permission is removed, every send starts failing with
+`INVALID_ACCESS` — the bot is no longer a member. A **private** chat (your own
+account) always works, and is what this repo currently uses.
+
 Add both to GitHub under Settings → Secrets and variables → Actions:
 
 | Secret | Value |
