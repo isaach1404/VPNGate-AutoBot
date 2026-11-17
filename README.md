@@ -23,12 +23,29 @@ probes alone are not treated as proof.
 
 | File | Purpose |
 | --- | --- |
-| `src/vpngate_api.py` | Fetches the VPN Gate CSV API, sorts by score, selects healthy OpenVPN servers |
+| `src/vpngate_api.py` | Fetches the VPN Gate CSV API, sorts by score, interleaves countries, selects healthy OpenVPN servers |
 | `src/server_tester.py` | Decodes a `.ovpn` config, probes the port, opens the tunnel, checks the exit IP |
 | `src/openvpn.py` | Writes decoded configs to `output/openvpn/*.ovpn` |
-| `src/sstp_fetcher.py` | Scrapes SSTP hostnames and IPs from the VPN Gate site |
+| `src/sstp_fetcher.py` | Scrapes SSTP hostnames, IPs and countries from the VPN Gate site |
 | `src/sstp_tester.py` | Connects over SSTP and verifies the tunnel's exit IP |
-| `src/telegram_sender.py` | Builds and delivers the report, splitting when over Telegram's size limit |
+| `src/telegram_sender.py` | Uploads each `.ovpn` as a file and sends the SSTP hostname list |
+
+## Telegram output
+
+OpenVPN servers are delivered as **one `.ovpn` file per message**, so importing
+is a tap rather than a copy-and-paste. Each caption carries only what the site
+shows: destination country, IP, protocol/port, uptime in days and the live
+session count. Tapping the file and choosing an OpenVPN app imports it directly.
+
+SSTP is a **hostname-only list**. Each hostname sits in a `<code>` block, so
+Telegram copies it on tap. Username and password are omitted entirely when they
+are the VPN Gate defaults (`vpn` / `vpn`), and the port is omitted when it is
+`443`; either appears only when it genuinely differs.
+
+Country coverage is spread on purpose. Servers are interleaved by country code
+with **Russia, Japan and the United States first**, so the highest-scoring
+country cannot fill every slot. When the site lists more countries than there
+are slots, each contributes in turn.
 
 ## Safety properties
 
@@ -39,7 +56,8 @@ probes alone are not treated as proof.
 - Both halves of the scan run with `continue-on-error`, so a failure in one
   does not block delivery of the other.
 - Every stage has a wall-clock budget, so a dead server list cannot hang the job.
-- Telegram messages are retried on rate limits and split into parts when long.
+- Telegram messages and file uploads are retried on rate limits, and long text
+  is split on line boundaries so HTML tags stay balanced.
 
 ## Configuration
 

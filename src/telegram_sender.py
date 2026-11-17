@@ -314,11 +314,11 @@ def create_header(openvpn_servers, sstp_servers):
     return "\n".join([
         "<b>VPN Gate - Healthy Servers</b>",
         "",
-        f"OpenVPN configs: {len(openvpn_servers)} (sent as files)",
-        f"SSTP hosts: {len(sstp_servers)}",
+        f"OpenVPN: {len(openvpn_servers)} configs (one file each, below)",
+        f"SSTP: {len(sstp_servers)} hosts",
         "",
-        "<i>An OpenVPN config file follows each of the next "
-        "messages.</i>"
+        "<i>Tap an .ovpn file, then open it with your OpenVPN app "
+        "to import it.</i>"
     ])
 
 
