@@ -2,7 +2,9 @@
 name: Temp Rubika Reachability
 
 on:
-  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/tmp-rubika-reach.yml'
 
 permissions:
   contents: read
@@ -25,4 +27,9 @@ jobs:
           curl -sS -m 40 -w "\nHTTP=%{http_code} time=%{time_total}s\n" \
             -X POST -H "Content-Type: application/json" \
             "https://botapi.rubika.ir/v3/${RUBIKA_BOT_TOKEN}/getMe" \
+            -d '{}' || echo "CURL FAILED"
+          echo "--- getUpdates ---"
+          curl -sS -m 40 -w "\nHTTP=%{http_code}\n" \
+            -X POST -H "Content-Type: application/json" \
+            "https://botapi.rubika.ir/v3/${RUBIKA_BOT_TOKEN}/getUpdates" \
             -d '{}' || echo "CURL FAILED"
