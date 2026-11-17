@@ -236,13 +236,11 @@ def create_sstp_section(servers):
         if row["ip"]:
             details.append(f"IP: {escape(row['ip'])}")
 
-        if row["days"]:
-            details.append(f"uptime {row['days']}d")
+        details.append(f"uptime {row['days'] or 0}d")
 
-        if row["sessions"]:
-            details.append(
-                f"{row['sessions']} {row['session_label']}"
-            )
+        details.append(
+            f"{row['sessions'] or 0} {row['session_label']}"
+        )
 
         if details:
             lines.append(f"   {' · '.join(details)}")
