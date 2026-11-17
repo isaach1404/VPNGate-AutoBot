@@ -17,8 +17,8 @@ import urllib.error
 from delivery import (
     OPENVPN_FILE,
     SSTP_FILE,
-    build_archive,
     encode_multipart,
+    find_config,
     load_servers,
     openvpn_rows,
     sstp_rows
@@ -110,16 +110,24 @@ def call_api(method, payload):
     return None
 
 
-def send_message(text):
+def send_message(text, silent=False):
     _, chat_id = get_credentials()
 
-    result = call_api("sendMessage", {
+    payload = {
         "chat_id": chat_id,
         "text": text
-    })
+    }
+
+    if silent:
+        payload["disable_notification"] = True
+
+    result = call_api("sendMessage", payload)
 
     if result:
-        print("Rubika message sent successfully.")
+        print(
+            "Rubika message sent"
+            + (" (silent)." if silent else " successfully.")
+        )
 
     return result is not None
 
@@ -176,7 +184,7 @@ def upload_file(path):
     return file_id
 
 
-def send_file(path, caption):
+def send_file(path, caption, silent=False):
     file_id = upload_file(path)
 
     if not file_id:
@@ -184,78 +192,101 @@ def send_file(path, caption):
 
     _, chat_id = get_credentials()
 
-    result = call_api("sendFile", {
+    payload = {
         "chat_id": chat_id,
         "file_id": file_id,
         "text": caption
-    })
+    }
+
+    if silent:
+        payload["disable_notification"] = True
+
+    result = call_api("sendFile", payload)
 
     if result:
-        print(f"Rubika received {path.name}")
+        print(
+            f"Rubika received {path.name}"
+            + (" (silent)." if silent else ".")
+        )
 
     return result is not None
 
 
-def openvpn_line(row):
-    details = []
+def ovpn_caption(row):
 
-    if row["days"]:
-        details.append(f"{row['days']}d up")
+    lines = [
+        f"{row['index']}. {row['country']}",
+        f"IP: {row['ip']}",
+        f"{row['protocol']} port {row['port']}"
+    ]
 
-    if row["sessions"]:
-        details.append(
-            f"{row['sessions']} {row['session_label']}"
-        )
+    lines.append(f"Uptime: {row['days'] or 0} days")
 
-    suffix = (
-        f" ({', '.join(details)})" if details else ""
-    )
-
-    return (
-        f"{row['index']}. {row['country']} "
-        f"{row['ip']}{suffix}"
-    )
-
-
-def create_report(openvpn_servers, sstp_servers):
-    lines = ["VPN Gate - Healthy Servers", ""]
-
-    if openvpn_servers:
-
-        lines.append("OPENVPN")
-        lines.append(
-            f"{len(openvpn_servers)} configs in one file "
-            "(attached below)."
-        )
-
-        for row in openvpn_rows(openvpn_servers):
-            lines.append(openvpn_line(row))
-
-        lines.append("")
-
-    lines.append("SSTP")
-    lines.append(f"{len(sstp_servers)} hosts")
-    lines.append("")
-
-    for row in sstp_rows(sstp_servers):
-
-        entry = f"{row['index']}. {row['hostname']}"
-
-        extras = []
-
-        if row["port"]:
-            extras.append(f"port {row['port']}")
-
-        if row["username"]:
-            extras.append(f"user {row['username']}")
-            extras.append(f"pass {row['password']}")
-
-        if extras:
-            entry += f" ({', '.join(extras)})"
-
-        lines.append(entry)
+    lines.append(f"Sessions: {row['sessions'] or 0}")
 
     return "\n".join(lines)
+
+
+def create_header(openvpn_count, sstp_count):
+    return "\n".join([
+        "VPN Gate - Healthy Servers",
+        "",
+        f"OpenVPN configs: {openvpn_count} (one file each, below)",
+        f"SSTP hosts: {sstp_count}",
+        "",
+        "Tap an .ovpn file, then open it with your OpenVPN app.",
+        "",
+        "SSTP will follow in the next message."
+    ])
+
+
+def create_sstp_section(servers):
+
+    lines = [
+        "SSTP SERVERS",
+        f"Selected servers: {len(servers)}",
+        ""
+    ]
+
+    if not servers:
+        lines.append("No reachable SSTP servers found.")
+        return lines
+
+    for row in sstp_rows(servers):
+
+        heading = f"{row['index']}. {row['hostname']}"
+
+        if row["port"]:
+            heading += f" (port {row['port']})"
+
+        if row["username"]:
+            heading += (
+                f" (user {row['username']}, "
+                f"pass {row['password']})"
+            )
+
+        lines.append(heading)
+
+        details = []
+
+        if row["country"]:
+            details.append(row["country"])
+
+        if row["ip"]:
+            details.append(f"IP: {row['ip']}")
+
+        if row["days"]:
+            details.append(f"uptime {row['days']}d")
+
+        if row["sessions"]:
+            details.append(
+                f"{row['sessions']} {row['session_label']}"
+            )
+
+        if details:
+            lines.append(f"   {' · '.join(details)}")
+
+    return lines
 
 
 def split_message(message, max_length=MAX_MESSAGE_LENGTH):
@@ -301,39 +332,61 @@ def main():
         return
 
     delivered = 0
+    missing = []
 
-    if openvpn_servers:
+    # Same rule as Telegram: one notification per run, then silence.
+    announced = False
 
-        archive, missing = build_archive(openvpn_servers)
+    def announce():
+        nonlocal announced
+        silent = announced
+        announced = True
+        return silent
 
-        if archive is not None:
+    if send_message(
+        create_header(len(openvpn_servers), len(sstp_servers)),
+        silent=announce()
+    ):
+        delivered += 1
 
-            caption = (
-                f"OpenVPN configs - "
-                f"{len(openvpn_servers) - len(missing)} "
-                "verified servers"
-            )
+    for row, server in zip(
+        openvpn_rows(openvpn_servers), openvpn_servers
+    ):
 
-            if send_file(archive, caption):
-                delivered += 1
+        config_path = find_config(server)
 
-    report = create_report(openvpn_servers, sstp_servers)
+        if config_path is None:
+            missing.append(row["index"])
+            continue
 
-    for chunk in split_message(report):
+        if send_file(
+            config_path,
+            ovpn_caption(row),
+            silent=announce()
+        ):
+            delivered += 1
 
-        if send_message(chunk):
+    for chunk in split_message(
+        "\n".join(create_sstp_section(sstp_servers))
+    ):
+
+        if send_message(chunk, silent=announce()):
             delivered += 1
 
     print()
     print("========== RUBIKA SUMMARY ==========")
     print(f"OpenVPN servers: {len(openvpn_servers)}")
+    print(
+        f"OpenVPN files sent: "
+        f"{len(openvpn_servers) - len(missing)}"
+    )
     print(f"SSTP servers: {len(sstp_servers)}")
     print(f"Messages delivered: {delivered}")
     print("====================================")
 
-    if delivered == 0:
+    if delivered <= 1:
         raise RuntimeError(
-            "Rubika accepted no messages; check the token "
+            "Rubika delivered only the header; check the token "
             "and chat id."
         )
 

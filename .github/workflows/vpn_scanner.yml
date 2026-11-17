@@ -139,8 +139,7 @@ jobs:
         if: always()
         run: |
           if [ -d output/openvpn ] && [ "$(find output/openvpn -name '*.ovpn' -type f | wc -l)" -gt 0 ]; then
-            cd output
-            zip -r ../vpngate-openvpn-configs.zip openvpn
+            (cd output && zip -r ../vpngate-openvpn-configs.zip openvpn)
           else
             echo "No OpenVPN configuration files were generated."
           fi

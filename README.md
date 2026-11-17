@@ -28,23 +28,24 @@ probes alone are not treated as proof.
 | `src/openvpn.py` | Writes decoded configs to `output/openvpn/*.ovpn` |
 | `src/sstp_fetcher.py` | Scrapes SSTP hostnames, IPs and countries from the VPN Gate site |
 | `src/sstp_tester.py` | Connects over SSTP and verifies the tunnel's exit IP |
-| `src/delivery.py` | Shared config lookup, archive building and report rows for every messenger |
-| `src/telegram_sender.py` | Uploads the `.ovpn` archive and the SSTP hostname list to Telegram |
-| `src/rubika_sender.py` | Delivers the same archive and list to Rubika |
+| `src/delivery.py` | Shared config lookup and report rows for every messenger |
+| `src/telegram_sender.py` | Uploads one `.ovpn` per message, then the SSTP list |
+| `src/rubika_sender.py` | Delivers the same files and list to Rubika |
 
 ## Telegram output
 
-OpenVPN servers are delivered as **one zip of every `.ovpn` file**, attached to a
-single message so a run triggers one notification rather than ten. The message
-body lists each server with only what the site shows: destination country, IP,
-uptime in days and the live session count. Unzip, then open a config with any
-OpenVPN app to import it.
+OpenVPN servers arrive as **one `.ovpn` file per message**, so each config is a
+tap to import in an OpenVPN app. Every caption carries that server's own
+details — country, IP, protocol and port, uptime in days, and the live session
+count — using only what the VPN Gate site itself shows.
 
-A run aims to be **one notification**. Ten OpenVPN rows plus ten SSTP rows sit
-right at Telegram's 1024-character caption limit, and longer country or host
-names push them over. When that happens the archive still arrives with a short
-caption and the full list follows as a silent message, so only the archive
-notifies.
+SSTP follows as **one message listing every host**, each with its destination
+details beneath the hostname: country, IP, uptime and session count. Username
+and password are shown only when they differ from `vpn` / `vpn`, and the port
+only when it is not `443`.
+
+A run produces **one notification**. The first message notifies; every file and
+list after it is sent silently, so a run with ten configs still buzzes once.
 
 SSTP is a **hostname-only list**. Each hostname sits in a `<code>` block, so
 Telegram copies it on tap. Username and password are omitted entirely when they
@@ -58,10 +59,10 @@ are slots, each contributes in turn.
 
 ### Rubika
 
-The same archive and the same list go to Rubika after Telegram, with identical
+The same files and the same list go to Rubika after Telegram, with identical
 content in plain text. Rubika's API puts the token in the URL path and requires
-a separate upload step, so `src/rubika_sender.py` reserves an upload URL,
-posts the archive, then sends the returned `file_id` to the chat.
+a separate upload step, so `src/rubika_sender.py` reserves an upload URL, posts
+each config, then sends the returned `file_id` to the chat.
 
 Both messengers are independent: a Rubika failure never blocks Telegram, and
 each raises a non-zero exit when it delivers nothing at all, so a broken token

@@ -115,11 +115,31 @@ class VPNGateSSTPParser(HTMLParser):
         except ValueError:
             return
 
+        sessions_match = re.search(
+            r"(\d[\d,]*)\s+sessions",
+            row_text,
+            re.IGNORECASE
+        )
+
+        uptime_match = re.search(
+            r"(\d[\d,]*)\s+days",
+            row_text,
+            re.IGNORECASE
+        )
+
         self.servers.append({
             "ip": ip,
             "sstp_hostname": hostname,
             "sstp_port": port,
             "country": self.row_country,
+            "sessions": (
+                int(sessions_match.group(1).replace(",", ""))
+                if sessions_match else 0
+            ),
+            "uptime_days": (
+                float(uptime_match.group(1).replace(",", ""))
+                if uptime_match else 0
+            ),
             "username": "vpn",
             "password": "vpn"
         })

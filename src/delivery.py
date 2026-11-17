@@ -1,9 +1,7 @@
 
-"""Shared file handling and report content for every messenger."""
+"""Shared file lookup and report rows for every messenger."""
 
 import json
-import uuid
-import zipfile
 
 from pathlib import Path
 
@@ -11,10 +9,6 @@ from pathlib import Path
 OPENVPN_FILE = Path("output/selected_servers.json")
 SSTP_FILE = Path("output/selected_sstp_servers.json")
 OPENVPN_DIR = Path("output/openvpn")
-
-# One archive for every selected config, so a messenger can deliver
-# the whole OpenVPN half of the report in a single message.
-ARCHIVE_FILE = Path("output/vpngate-openvpn-configs.zip")
 
 
 def load_servers(path, required=True):
@@ -56,62 +50,31 @@ def find_config(server):
     return candidate if candidate.exists() else None
 
 
-def build_archive(servers):
-    """Collect every available config into one deliverable file.
-
-    Returns the archive path and the indexes for which no .ovpn file
-    could be found, so the caller can still report those servers.
-    """
-
-    ARCHIVE_FILE.parent.mkdir(
-        parents=True, exist_ok=True
-    )
-
-    missing = []
-    added = 0
-
-    with zipfile.ZipFile(
-        ARCHIVE_FILE, "w", zipfile.ZIP_DEFLATED
-    ) as archive:
-
-        for index, server in enumerate(servers, start=1):
-
-            config = find_config(server)
-
-            if config is None:
-                missing.append(index)
-                continue
-
-            archive.write(config, arcname=config.name)
-            added += 1
-
-    if not added:
-        ARCHIVE_FILE.unlink(missing_ok=True)
-        return None, missing
-
-    return ARCHIVE_FILE, missing
-
-
 def openvpn_rows(servers):
     """The fields the VPN Gate site itself shows for each server."""
 
     for index, server in enumerate(servers, start=1):
 
+        sessions = server.get("sessions")
+
         yield {
             "index": index,
             "country": str(server.get("country", "Unknown")),
             "ip": str(server.get("ip", "?")),
+            "protocol": str(
+                server.get("protocol", "?")
+            ).upper(),
+            "port": server.get("port", "?"),
             "days": server.get("uptime_days"),
-            "sessions": server.get("sessions"),
+            "sessions": sessions,
             "session_label": (
-                "session" if server.get("sessions") == 1
-                else "sessions"
+                "session" if sessions == 1 else "sessions"
             )
         }
 
 
 def sstp_rows(servers):
-    """Hostname plus whatever differs from the vpn / 443 defaults."""
+    """Hostname, destination details, and any non-default login."""
 
     for index, server in enumerate(servers, start=1):
 
@@ -124,10 +87,19 @@ def sstp_rows(servers):
             username != "vpn" or password != "vpn"
         )
 
+        sessions = server.get("sessions")
+
         yield {
             "index": index,
             "hostname": str(
                 server.get("sstp_hostname", "Unknown")
+            ),
+            "country": str(server.get("country", "")).strip(),
+            "ip": str(server.get("ip", "")).strip(),
+            "days": server.get("uptime_days"),
+            "sessions": sessions,
+            "session_label": (
+                "session" if sessions == 1 else "sessions"
             ),
             "port": port if port != 443 else None,
             "username": username if custom_login else None,
@@ -137,6 +109,8 @@ def sstp_rows(servers):
 
 def encode_multipart(fields, files):
     """Build a multipart body without a third-party dependency."""
+
+    import uuid
 
     boundary = uuid.uuid4().hex
     lines = []
