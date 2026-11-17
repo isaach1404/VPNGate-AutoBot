@@ -182,6 +182,13 @@ def test_sstp_server(server):
             # No defaultroute / replacedefaultroute here: the runner
             # only needs the PPP interface to exist so the public-IP
             # check can be pinned to it with SO_BINDTODEVICE.
+            #
+            # Do not require the peer to authenticate: VPN Gate
+            # servers never authenticate to the client, and demanding
+            # it (require-mschap-v2) makes pppd drop the link with
+            # "peer refused to authenticate". The refuse-* options are
+            # omitted too, so pppd answers whatever challenge the
+            # server picks using /etc/ppp/{chap,pap}-secrets.
             command = [
                 "sudo", "-n", "sstpc",
                 "--log-level", "4",
@@ -193,18 +200,12 @@ def test_sstp_server(server):
                 "debug",
                 "logfile", str(ppp_log),
                 "unit", str(PPP_UNIT),
-                "noipdefault",
                 "noccp",
                 "novj",
                 "noipv6",
                 "nodefaultroute",
                 "nodetach",
-                "noauth",
-                "require-mschap-v2",
-                "refuse-eap",
-                "refuse-pap",
-                "refuse-chap",
-                "refuse-mschap"
+                "noauth"
             ]
 
             with sstp_log.open(
