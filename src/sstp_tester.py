@@ -24,6 +24,38 @@ MAX_TEST_SECONDS = 480
 PPP_UNIT = 0
 PPP_INTERFACE = f"ppp{PPP_UNIT}"
 
+PREFERRED_COUNTRIES = ["RU", "JP", "US"]
+
+
+def order_by_country_variety(servers):
+    """Interleave countries so one cannot fill every slot."""
+
+    groups = {}
+
+    for server in servers:
+
+        code = str(
+            server.get("country", "")
+        ).strip().upper() or "??"
+
+        groups.setdefault(code, []).append(server)
+
+    order = [c for c in PREFERRED_COUNTRIES if c in groups]
+    order.extend(c for c in groups if c not in order)
+
+    ordered = []
+
+    while any(groups.get(c) for c in order):
+
+        for code in order:
+
+            bucket = groups.get(code)
+
+            if bucket:
+                ordered.append(bucket.pop(0))
+
+    return ordered
+
 
 def run_command(command, timeout=15, check=False):
 
@@ -298,7 +330,9 @@ def save_selected_servers(servers):
 
 
 def main():
-    servers = load_sstp_servers()
+    servers = order_by_country_variety(
+        load_sstp_servers()
+    )
 
     selected = []
     tested_count = 0

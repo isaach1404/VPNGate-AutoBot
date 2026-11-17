@@ -137,6 +137,62 @@ def fetch_servers():
     return servers
 
 
+PREFERRED_COUNTRIES = [
+    "RU",
+    "JP",
+    "US"
+]
+
+
+def order_by_country_variety(
+    servers,
+    preferred=PREFERRED_COUNTRIES
+):
+    """Interleave countries so one country cannot fill every slot.
+
+    Servers are grouped by country code, each group keeps the
+    existing score order, and groups are consumed round-robin with
+    the preferred countries first. A dominant country like Japan
+    therefore contributes one server per round instead of ten.
+    """
+
+    groups = {}
+
+    for server in servers:
+
+        code = server.get(
+            "CountryShort", ""
+        ).strip().upper() or "??"
+
+        groups.setdefault(code, []).append(server)
+
+    order = []
+
+    for code in preferred:
+
+        if code in groups:
+            order.append(code)
+
+    order.extend(
+        code
+        for code in groups
+        if code not in order
+    )
+
+    ordered = []
+
+    while any(groups.get(code) for code in order):
+
+        for code in order:
+
+            bucket = groups.get(code)
+
+            if bucket:
+                ordered.append(bucket.pop(0))
+
+    return ordered
+
+
 def test_all_servers(
     servers,
     target_count=TARGET_HEALTHY_SERVERS,
@@ -254,6 +310,15 @@ def save_selected_servers(selected_servers):
             "speed": get_number(server.get("Speed")),
             "vpn_ping": get_number(server.get("Ping")),
 
+            # Uptime is milliseconds in the API; the site shows days.
+            "uptime_days": round(
+                get_number(server.get("Uptime")) / 86_400_000,
+                1
+            ),
+            "sessions": get_number(
+                server.get("NumVpnSessions")
+            ),
+
             "protocol": result["protocol"],
             "port": result["port"],
             "ping_test": result["ping"],
@@ -315,13 +380,16 @@ def main():
             f"Servers with OpenVPN config: {openvpn_count}"
         )
 
-        # Step 3: Sort by VPN Gate score
+        # Step 3: Sort by VPN Gate score, then interleave countries
+        # so a single country cannot occupy every selected slot.
         servers.sort(
             key=lambda server: get_number(
                 server.get("Score")
             ),
             reverse=True
         )
+
+        servers = order_by_country_variety(servers)
 
         print()
         print("First 10 servers by score:")
