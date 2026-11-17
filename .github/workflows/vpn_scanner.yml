@@ -122,10 +122,18 @@ jobs:
           done
 
       - name: Send OpenVPN and SSTP servers to Telegram
+        continue-on-error: true
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python src/telegram_sender.py
+
+      - name: Send OpenVPN and SSTP servers to Rubika
+        continue-on-error: true
+        env:
+          RUBIKA_BOT_TOKEN: ${{ secrets.RUBIKA_BOT_TOKEN }}
+          RUBIKA_CHAT_ID: ${{ secrets.RUBIKA_CHAT_ID }}
+        run: python src/rubika_sender.py
 
       - name: Package OpenVPN files
         if: always()

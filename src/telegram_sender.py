@@ -5,14 +5,20 @@ import sys
 import time
 import urllib.request
 import urllib.error
-import uuid
+
 from pathlib import Path
 from html import escape
 
+from delivery import (
+    OPENVPN_FILE,
+    SSTP_FILE,
+    build_archive,
+    encode_multipart,
+    load_servers,
+    openvpn_rows,
+    sstp_rows
+)
 
-OPENVPN_FILE = Path("output/selected_servers.json")
-SSTP_FILE = Path("output/selected_sstp_servers.json")
-OPENVPN_DIR = Path("output/openvpn")
 
 # Telegram rejects messages longer than 4096 characters.
 TELEGRAM_MAX_LENGTH = 3800
@@ -57,8 +63,7 @@ def call_api(method, payload, files=None):
 
         try:
             with urllib.request.urlopen(
-                request,
-                timeout=60
+                request, timeout=90
             ) as response:
 
                 result = json.loads(
@@ -66,9 +71,11 @@ def call_api(method, payload, files=None):
                 )
 
             if not result.get("ok"):
-                raise RuntimeError(
-                    f"Telegram rejected {method}."
+                print(
+                    f"Telegram rejected {method}: "
+                    f"{str(result.get('description'))[:200]}"
                 )
+                return None
 
             return result
 
@@ -104,38 +111,6 @@ def call_api(method, payload, files=None):
     return None
 
 
-def encode_multipart(fields, files):
-    boundary = uuid.uuid4().hex
-    lines = []
-
-    for name, value in fields.items():
-
-        lines.append(f"--{boundary}".encode())
-        lines.append(
-            f'Content-Disposition: form-data; name="{name}"'.encode()
-        )
-        lines.append(b"")
-        lines.append(str(value).encode("utf-8"))
-
-    for name, (filename, content) in files.items():
-
-        lines.append(f"--{boundary}".encode())
-        lines.append(
-            (
-                f'Content-Disposition: form-data; name="{name}"; '
-                f'filename="{filename}"'
-            ).encode()
-        )
-        lines.append(b"Content-Type: application/octet-stream")
-        lines.append(b"")
-        lines.append(content)
-
-    lines.append(f"--{boundary}--".encode())
-    lines.append(b"")
-
-    return b"\r\n".join(lines), f"multipart/form-data; boundary={boundary}"
-
-
 def send_telegram_message(message):
     _, chat_id = get_token_and_chat()
 
@@ -155,7 +130,9 @@ def send_telegram_message(message):
 def send_telegram_document(path, caption):
     _, chat_id = get_token_and_chat()
 
-    content = path.read_bytes()
+    # Captions are capped separately from message length.
+    if len(caption) > CAPTION_MAX_LENGTH:
+        caption = caption[:CAPTION_MAX_LENGTH - 3] + "..."
 
     result = call_api(
         "sendDocument",
@@ -164,7 +141,9 @@ def send_telegram_document(path, caption):
             "caption": caption,
             "parse_mode": "HTML"
         },
-        files={"document": (path.name, content)}
+        files={
+            "document": (path.name, path.read_bytes())
+        }
     )
 
     if result:
@@ -173,107 +152,52 @@ def send_telegram_document(path, caption):
     return result is not None
 
 
-def load_servers(file_path, required=True):
-
-    if not file_path.exists():
-
-        if required:
-            raise FileNotFoundError(
-                f"Server list not found: {file_path}"
-            )
-
-        print(f"WARNING: server list missing: {file_path}")
-        return []
-
-    with file_path.open("r", encoding="utf-8") as file:
-        servers = json.load(file)
-
-    if not isinstance(servers, list):
-        raise ValueError(f"Invalid server list: {file_path}")
-
-    return servers
-
-
-def find_config(server):
-    """Locate the generated .ovpn file for a selected server."""
-
-    code = str(server.get("country_code", "Unknown")).strip() or "Unknown"
-    ip = str(server.get("ip", "")).strip()
-
-    if not ip:
-        return None
-
-    candidate = OPENVPN_DIR / f"{code}_{ip}.ovpn"
-
-    return candidate if candidate.exists() else None
-
-
-def server_line(server):
-    """One compact line: country, IP, uptime and sessions."""
-
-    country = str(server.get("country", "Unknown"))
-    ip = str(server.get("ip", "?"))
-    days = server.get("uptime_days")
-    sessions = server.get("sessions")
+def openvpn_line(row):
+    """One line per server: country, IP, uptime and sessions."""
 
     details = []
 
-    if days:
-        details.append(f"{days}d up")
+    if row["days"]:
+        details.append(f"{row['days']}d up")
 
-    if sessions:
-        details.append(f"{sessions} sessions")
+    if row["sessions"]:
+        details.append(
+            f"{row['sessions']} {row['session_label']}"
+        )
 
-    suffix = f" ({', '.join(details)})" if details else ""
+    suffix = (
+        f" ({', '.join(details)})" if details else ""
+    )
 
     return (
-        f"<code>{escape(ip)}</code> "
-        f"{escape(country)}{escape(suffix)}"
+        f"{row['index']}. {escape(row['country'])} "
+        f"<code>{escape(row['ip'])}</code>"
+        f"{escape(suffix)}"
     )
 
 
-def ovpn_caption(index, server):
+def create_openvpn_section(servers):
     lines = [
-        f"<b>{index}. {escape(str(server.get('country', 'Unknown')))}</b>",
-        f"IP: <code>{escape(str(server.get('ip', '?')))}</code>",
+        "<b>OPENVPN</b>",
         (
-            f"{escape(str(server.get('protocol', '?')).upper())} "
-            f"port {escape(str(server.get('port', '?')))}"
-        )
+            f"{len(servers)} configs in one file. "
+            "Tap it, then open with your OpenVPN app."
+        ),
+        ""
     ]
 
-    days = server.get("uptime_days")
-    sessions = server.get("sessions")
+    for row in openvpn_rows(servers):
+        lines.append(openvpn_line(row))
 
-    if days:
-        lines.append(f"Uptime: {days} days")
-
-    if sessions:
-        lines.append(f"Sessions: {sessions}")
-
-    lines.extend([
-        "",
-        "Open in an OpenVPN app to import."
-    ])
-
-    caption = "\n".join(lines)
-
-    if len(caption) > CAPTION_MAX_LENGTH:
-        caption = caption[:CAPTION_MAX_LENGTH - 3] + "..."
-
-    return caption
+    return lines
 
 
 def create_sstp_section(servers):
-    """Hostnames only, tappable to copy.
-
-    Username and port are omitted unless they differ from the
-    VPN Gate defaults of vpn / 443.
-    """
+    """Hostnames only, tappable to copy."""
 
     lines = [
-        "<b>SSTP SERVERS</b>",
-        f"Selected servers: {len(servers)}",
+        "<b>SSTP</b>",
+        f"{len(servers)} hosts",
         ""
     ]
 
@@ -281,26 +205,22 @@ def create_sstp_section(servers):
         lines.append("No reachable SSTP servers found.")
         return lines
 
-    for index, server in enumerate(servers, start=1):
+    for row in sstp_rows(servers):
 
-        hostname = str(server.get("sstp_hostname", "Unknown"))
-        port = server.get("sstp_port", 443)
-        username = str(server.get("username", "vpn"))
-        password = str(server.get("password", "vpn"))
-
-        # <code> makes the hostname tappable so Telegram copies it.
+        # <code> makes the hostname tappable to copy.
         entry = (
-            f"{index}. <code>{escape(hostname)}</code>"
+            f"{row['index']}. "
+            f"<code>{escape(row['hostname'])}</code>"
         )
 
         extras = []
 
-        if port != 443:
-            extras.append(f"port {port}")
+        if row["port"]:
+            extras.append(f"port {row['port']}")
 
-        if username != "vpn" or password != "vpn":
-            extras.append(f"user {escape(username)}")
-            extras.append(f"pass {escape(password)}")
+        if row["username"]:
+            extras.append(f"user {escape(row['username'])}")
+            extras.append(f"pass {escape(row['password'])}")
 
         if extras:
             entry += f" ({', '.join(extras)})"
@@ -310,16 +230,16 @@ def create_sstp_section(servers):
     return lines
 
 
-def create_header(openvpn_servers, sstp_servers):
-    return "\n".join([
-        "<b>VPN Gate - Healthy Servers</b>",
-        "",
-        f"OpenVPN: {len(openvpn_servers)} configs (one file each, below)",
-        f"SSTP: {len(sstp_servers)} hosts",
-        "",
-        "<i>Tap an .ovpn file, then open it with your OpenVPN app "
-        "to import it.</i>"
-    ])
+def create_report(openvpn_servers, sstp_servers):
+    lines = ["<b>VPN Gate - Healthy Servers</b>", ""]
+
+    if openvpn_servers:
+        lines.extend(create_openvpn_section(openvpn_servers))
+        lines.append("")
+
+    lines.extend(create_sstp_section(sstp_servers))
+
+    return "\n".join(lines)
 
 
 def split_message(message, max_length=TELEGRAM_MAX_LENGTH):
@@ -358,48 +278,40 @@ def main():
 
     delivered = 0
 
-    header = create_header(openvpn_servers, sstp_servers)
+    # One archive instead of one message per server, so a run does
+    # not trigger a burst of notifications.
+    archive, missing = (None, [])
 
-    if send_telegram_message(header):
-        delivered += 1
+    if openvpn_servers:
+        archive, missing = build_archive(openvpn_servers)
 
-    # OpenVPN servers become downloadable files with a short caption.
-    missing_configs = []
-
-    for index, server in enumerate(openvpn_servers, start=1):
-
-        config_path = find_config(server)
-
-        if config_path is None:
-            missing_configs.append(index)
-            continue
-
-        if send_telegram_document(
-            config_path,
-            ovpn_caption(index, server)
-        ):
-            delivered += 1
-
-    # A compact text list for anything whose file was not found, so
-    # the server is still usable by hand.
-    if missing_configs:
-
-        fallback = [
-            "<b>OPENVPN (no config file found)</b>",
-            ""
-        ]
-
-        for index in missing_configs:
-
-            fallback.append(
-                f"{index}. {server_line(openvpn_servers[index - 1])}"
+        if archive is None:
+            print(
+                "No .ovpn files were found; reporting OpenVPN "
+                "servers as text only."
             )
 
-        send_telegram_message("\n".join(fallback))
+    report = create_report(openvpn_servers, sstp_servers)
 
-    for chunk in split_message(
-        "\n".join(create_sstp_section(sstp_servers))
-    ):
+    if archive is not None:
+
+        caption = (
+            f"<b>OpenVPN configs</b> - "
+            f"{len(openvpn_servers) - len(missing)} "
+            "servers, verified working"
+        )
+
+        ok = send_telegram_document(archive, caption)
+
+    else:
+        ok = send_telegram_message(
+            "\n".join(split_message(report)[0:1])
+        )
+
+    if ok:
+        delivered += 1
+
+    for chunk in split_message(report):
 
         if send_telegram_message(chunk):
             delivered += 1
@@ -407,18 +319,27 @@ def main():
     print()
     print("========== TELEGRAM SUMMARY ==========")
     print(f"OpenVPN servers: {len(openvpn_servers)}")
-    print(f"OpenVPN files sent: {len(openvpn_servers) - len(missing_configs)}")
+    print(
+        f"OpenVPN configs in archive: "
+        f"{len(openvpn_servers) - len(missing)}"
+    )
     print(f"SSTP servers sent: {len(sstp_servers)}")
     print(f"Messages delivered: {delivered}")
 
-    if missing_configs:
+    if missing:
         print(
-            f"WARNING: no .ovpn file for {len(missing_configs)} "
-            "server(s); listed as text instead."
+            f"WARNING: no .ovpn file for {len(missing)} "
+            "server(s); listed in the text report."
+        )
+
+    print("======================================")
+
+    if delivered == 0:
+        raise RuntimeError(
+            "Telegram accepted nothing; check the token and chat id."
         )
 
     print("Telegram delivery completed.")
-    print("======================================")
 
 
 if __name__ == "__main__":

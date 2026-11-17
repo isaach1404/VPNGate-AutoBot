@@ -28,14 +28,17 @@ probes alone are not treated as proof.
 | `src/openvpn.py` | Writes decoded configs to `output/openvpn/*.ovpn` |
 | `src/sstp_fetcher.py` | Scrapes SSTP hostnames, IPs and countries from the VPN Gate site |
 | `src/sstp_tester.py` | Connects over SSTP and verifies the tunnel's exit IP |
-| `src/telegram_sender.py` | Uploads each `.ovpn` as a file and sends the SSTP hostname list |
+| `src/delivery.py` | Shared config lookup, archive building and report rows for every messenger |
+| `src/telegram_sender.py` | Uploads the `.ovpn` archive and the SSTP hostname list to Telegram |
+| `src/rubika_sender.py` | Delivers the same archive and list to Rubika |
 
 ## Telegram output
 
-OpenVPN servers are delivered as **one `.ovpn` file per message**, so importing
-is a tap rather than a copy-and-paste. Each caption carries only what the site
-shows: destination country, IP, protocol/port, uptime in days and the live
-session count. Tapping the file and choosing an OpenVPN app imports it directly.
+OpenVPN servers are delivered as **one zip of every `.ovpn` file**, attached to a
+single message so a run triggers one notification rather than ten. The message
+body lists each server with only what the site shows: destination country, IP,
+uptime in days and the live session count. Unzip, then open a config with any
+OpenVPN app to import it.
 
 SSTP is a **hostname-only list**. Each hostname sits in a `<code>` block, so
 Telegram copies it on tap. Username and password are omitted entirely when they
@@ -46,6 +49,22 @@ Country coverage is spread on purpose. Servers are interleaved by country code
 with **Russia, Japan and the United States first**, so the highest-scoring
 country cannot fill every slot. When the site lists more countries than there
 are slots, each contributes in turn.
+
+### Rubika
+
+The same archive and the same list go to Rubika after Telegram, with identical
+content in plain text. Rubika's API puts the token in the URL path and requires
+a separate upload step, so `src/rubika_sender.py` reserves an upload URL,
+posts the archive, then sends the returned `file_id` to the chat.
+
+Both messengers are independent: a Rubika failure never blocks Telegram, and
+each raises a non-zero exit when it delivers nothing at all, so a broken token
+shows up in the run instead of passing silently.
+
+## Schedule
+
+`.github/workflows/vpn_scanner.yml` runs at `7,37 * * * *` — **every 30 minutes,
+48 times a day**. Change that cron line to adjust it.
 
 ## Safety properties
 
@@ -66,6 +85,8 @@ Secrets (Settings → Secrets and variables → Actions):
 | Secret | Description |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | Bot token from [@BotFather](https://t.me/BotFather) |
+| `RUBIKA_BOT_TOKEN` | Bot token from [@BotFather](https://rubika.ir/botfather) |
+| `RUBIKA_CHAT_ID` | Chat, group or channel id the Rubika bot posts to |
 | `TELEGRAM_CHAT_ID` | Target chat or channel ID |
 
 Tuning (environment variables, set in the workflow):
