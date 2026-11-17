@@ -2,6 +2,7 @@
 """Shared file lookup and report rows for every messenger."""
 
 import json
+import re
 
 from pathlib import Path
 
@@ -32,20 +33,39 @@ def load_servers(path, required=True):
     return servers
 
 
+def config_filename(country_code, ip, hostname):
+    """Unique per server.
+
+    Distinct VPN Gate servers can share one IP, so the hostname is
+    part of the name; without it two servers would overwrite each
+    other's file and only one would ever be delivered.
+    """
+
+    parts = [
+        str(country_code).strip() or "Unknown",
+        str(ip).strip() or "Unknown",
+        str(hostname).strip()
+    ]
+
+    name = "_".join(part for part in parts if part)
+
+    name = re.sub(r'[\\/:*?"<>|]', "_", name)
+    name = re.sub(r"\s+", "_", name)
+
+    return f"{name[:90]}.ovpn"
+
+
 def find_config(server):
     """Locate the generated .ovpn file for a selected server."""
 
-    code = (
-        str(server.get("country_code", "Unknown")).strip()
-        or "Unknown"
-    )
-
-    ip = str(server.get("ip", "")).strip()
-
-    if not ip:
+    if not str(server.get("ip", "")).strip():
         return None
 
-    candidate = OPENVPN_DIR / f"{code}_{ip}.ovpn"
+    candidate = OPENVPN_DIR / config_filename(
+        server.get("country_code", ""),
+        server.get("ip", ""),
+        server.get("hostname", "")
+    )
 
     return candidate if candidate.exists() else None
 
