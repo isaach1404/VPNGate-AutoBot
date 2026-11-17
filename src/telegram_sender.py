@@ -111,18 +111,24 @@ def call_api(method, payload, files=None):
     return None
 
 
-def send_telegram_message(message):
+def send_telegram_message(message, silent=False):
+    """silent=True delivers without a notification sound or banner."""
+
     _, chat_id = get_token_and_chat()
 
     result = call_api("sendMessage", {
         "chat_id": chat_id,
         "text": message,
         "parse_mode": "HTML",
-        "disable_web_page_preview": True
+        "disable_web_page_preview": True,
+        "disable_notification": silent
     })
 
     if result:
-        print("Telegram message sent successfully.")
+        print(
+            "Telegram message sent"
+            + (" (silent)." if silent else " successfully.")
+        )
 
     return result is not None
 
@@ -299,26 +305,30 @@ def main():
 
     if archive is not None:
 
-        # The whole report rides along as the caption, so the run
-        # produces exactly one notification.
-        if len(report) <= CAPTION_MAX_LENGTH:
+        # The archive is the one message allowed to notify. When the
+        # report fits, it rides along as the caption and the run stays
+        # a single message.
+        fits = len(report) <= CAPTION_MAX_LENGTH
 
-            if send_telegram_document(archive, report):
-                delivered += 1
+        if send_telegram_document(
+            archive,
+            report if fits else create_short_caption(openvpn_servers)
+        ):
+            delivered += 1
 
-        else:
-            if send_telegram_document(
-                archive, create_short_caption(openvpn_servers)
-            ):
-                delivered += 1
+        # Otherwise the rows follow silently, so the archive's
+        # notification stays the only one.
+        if not fits:
 
             for chunk in split_message(report):
 
-                if send_telegram_message(chunk):
+                if send_telegram_message(chunk, silent=True):
                     delivered += 1
 
     else:
 
+        # No archive to carry the report; the text is all there is,
+        # so it is allowed to notify.
         for chunk in split_message(report):
 
             if send_telegram_message(chunk):

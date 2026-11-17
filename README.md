@@ -40,6 +40,12 @@ body lists each server with only what the site shows: destination country, IP,
 uptime in days and the live session count. Unzip, then open a config with any
 OpenVPN app to import it.
 
+A run aims to be **one notification**. Ten OpenVPN rows plus ten SSTP rows sit
+right at Telegram's 1024-character caption limit, and longer country or host
+names push them over. When that happens the archive still arrives with a short
+caption and the full list follows as a silent message, so only the archive
+notifies.
+
 SSTP is a **hostname-only list**. Each hostname sits in a `<code>` block, so
 Telegram copies it on tap. Username and password are omitted entirely when they
 are the VPN Gate defaults (`vpn` / `vpn`), and the port is omitted when it is
