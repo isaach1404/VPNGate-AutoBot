@@ -4,7 +4,7 @@ name: VPN Gate Scanner
 on:
   workflow_dispatch:
   schedule:
-    - cron: '7,37 * * * *'
+    - cron: '7 * * * *'
 
 permissions:
   contents: read

@@ -12,7 +12,7 @@ VPN Gate API  ──►  real OpenVPN connect + public-IP check  ──┐
 VPN Gate site ──►  real SSTP connect + public-IP check  ─────┘
 ```
 
-The pipeline runs every 30 minutes via GitHub Actions
+The pipeline runs hourly via GitHub Actions
 (`.github/workflows/vpn_scanner.yml`) and can also be triggered manually.
 
 A server only counts as healthy when the tunnel comes up **and** the public IP
@@ -120,8 +120,8 @@ delivers nothing fails instead, so a wrong token is visible.
 
 ## Schedule
 
-`.github/workflows/vpn_scanner.yml` runs at `7,37 * * * *` — **every 30 minutes,
-48 times a day**. Change that cron line to adjust it.
+`.github/workflows/vpn_scanner.yml` runs at `7 * * * *` — **hourly, 24 times a
+day**. Change that cron line to adjust it; `7,37 * * * *` gives half-hourly.
 
 ## Safety properties
 
