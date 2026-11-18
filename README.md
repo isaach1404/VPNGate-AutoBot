@@ -12,8 +12,9 @@ VPN Gate API  ──►  real OpenVPN connect + public-IP check  ──┐
 VPN Gate site ──►  real SSTP connect + public-IP check  ─────┘
 ```
 
-The pipeline runs hourly via GitHub Actions
-(`.github/workflows/vpn_scanner.yml`) and can also be triggered manually.
+The pipeline runs about hourly via GitHub Actions
+(`.github/workflows/vpn_scanner.yml`) and can also be triggered manually. See
+[Schedule](#schedule) for why it does not simply use an hourly cron.
 
 A server only counts as healthy when the tunnel comes up **and** the public IP
 observed through the tunnel differs from the runner's own IP. Reachability
@@ -120,16 +121,25 @@ delivers nothing fails instead, so a wrong token is visible.
 
 ## Schedule
 
-`.github/workflows/vpn_scanner.yml` runs at `7 * * * *` — **hourly, 24 times a
-day**. Change that cron line to adjust it; `7,37 * * * *` gives half-hourly.
+The workflow is meant to scan **about once an hour**, but it does not rely on
+GitHub firing cron precisely.
 
-**The schedule only holds up while this repo is public.** A private repo draws
-on the 2000 Actions-minutes-per-month allowance, and a run costs about 6.6
-minutes, so hourly needs roughly 4750. GitHub does not fail when the allowance
-runs out — it **silently skips the scheduled fires**, which looks exactly like
-a broken cron: no errors, no logs, just a run every few hours. If this repo is
-ever made private again, drop to `7 */3 * * *` (eight runs a day, ~1580
-minutes) or expect gaps.
+A cron of `7 * * * *` produced a run every **4 to 11 hours** in practice: over
+85 hours GitHub fired only 14 times instead of ~138, at random minutes and
+never on `:07`. This is the scheduler's own behaviour, not a workflow bug — the
+runs that did fire started with zero queue delay and succeeded. Tightening the
+cron cannot fix it.
+
+So the cron asks every 5 minutes (`*/5 * * * *`, the fastest GitHub allows) and
+a `gate` job decides whether the scan is actually due. The gate looks at the
+most recent run that really scanned and lets the scan start only once
+`INTERVAL_MINUTES` (50) have passed. Gated-out fires finish in a few seconds,
+and manual runs always scan. The result is that the interval is a **lower
+bound** rather than a lottery: you get a scan at least every hour or so, and
+never two in quick succession.
+
+To change the interval, edit `INTERVAL_MINUTES` in the gate step. To change how
+often it is attempted, edit the cron line.
 
 ## Safety properties
 

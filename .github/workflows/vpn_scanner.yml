@@ -3,23 +3,132 @@ name: VPN Gate Scanner
 
 on:
   workflow_dispatch:
-  # The repo must stay PUBLIC for this schedule to be dependable. A
-  # private repo draws on the 2000 Actions minutes/month allowance and
-  # a run costs ~6.6 min, so hourly would need ~4750 and GitHub would
-  # silently drop most fires -- no error, no log, just a missing run.
+  # GitHub runs a scheduled workflow at only a fraction of its cron
+  # slots -- measured on this repo at ~9%, at random minutes and never
+  # on the requested one -- so a '7 * * * *' cron produced a run every
+  # 4-11 hours. The cron therefore asks every 5 minutes (the fastest
+  # GitHub allows) and the gate job decides whether the scan is due,
+  # which turns the schedule into a lower bound instead of a lottery.
+  # Most fires stop at the gate after a few seconds.
   schedule:
-    - cron: '7 * * * *'
+    - cron: '*/5 * * * *'
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: vpn-gate-scanner
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: Decide whether a scan is due
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      due: ${{ steps.check.outputs.due }}
+
+    steps:
+      - name: Check whether a scan is due
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import datetime
+          import json
+          import os
+          import sys
+          import urllib.request
+
+          INTERVAL_MINUTES = 50
+
+          # A scan runs for minutes; a gated-out fire stops within
+          # seconds. Duration is the cheapest reliable discriminator:
+          # it needs one API call, where matching on step names would
+          # need one per run and could stall the gate on rate limits.
+          SCAN_MINUTES = 3
+
+          def note(message):
+              # stdout is redirected into $GITHUB_OUTPUT, so anything
+              # that is not a key=value pair has to go to stderr.
+              print(message, file=sys.stderr)
+
+          def fetch_runs():
+              path = "/actions/workflows/vpn_scanner.yml/runs?per_page=50"
+              request = urllib.request.Request(
+                  f"https://api.github.com/repos/{os.environ['REPO']}{path}",
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  return json.load(response)["workflow_runs"]
+
+          def minutes_between(earlier, later):
+              start = datetime.datetime.fromisoformat(
+                  earlier.replace("Z", "+00:00")
+              )
+              end = datetime.datetime.fromisoformat(
+                  later.replace("Z", "+00:00")
+              )
+              return (end - start).total_seconds() / 60
+
+          def last_scan_minutes_ago():
+              """Age of the most recent run that actually scanned."""
+
+              current = int(os.environ["RUN_ID"])
+              now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+              for run in fetch_runs():
+                  if run["id"] == current or run["status"] != "completed":
+                      continue
+                  if run["conclusion"] != "success":
+                      continue
+                  if minutes_between(
+                      run["run_started_at"], run["updated_at"]
+                  ) < SCAN_MINUTES:
+                      continue
+
+                  return minutes_between(run["run_started_at"], now)
+
+              return None
+
+          def decide():
+              if os.environ["EVENT_NAME"] != "schedule":
+                  note("Manual run; scanning.")
+                  return True
+
+              try:
+                  elapsed = last_scan_minutes_ago()
+              except Exception as error:
+                  # Better to scan twice than never: the gate exists to
+                  # stop floods, not to become a new way to miss a run.
+                  note(f"Could not read run history ({error}); scanning.")
+                  return True
+
+              if elapsed is None:
+                  note("No earlier scan found; scanning.")
+                  return True
+
+              note(f"Last scan started {elapsed:.0f} min ago.")
+
+              return elapsed >= INTERVAL_MINUTES
+
+          print(f"due={'true' if decide() else 'false'}")
+          PY
+
   scan:
     name: Fetch VPN Gate Servers
+    needs: gate
+    if: needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
