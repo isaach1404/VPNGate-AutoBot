@@ -3,6 +3,10 @@ name: VPN Gate Scanner
 
 on:
   workflow_dispatch:
+  # The repo must stay PUBLIC for this schedule to be dependable. A
+  # private repo draws on the 2000 Actions minutes/month allowance and
+  # a run costs ~6.6 min, so hourly would need ~4750 and GitHub would
+  # silently drop most fires -- no error, no log, just a missing run.
   schedule:
     - cron: '7 * * * *'
 

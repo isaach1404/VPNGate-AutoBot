@@ -123,6 +123,14 @@ delivers nothing fails instead, so a wrong token is visible.
 `.github/workflows/vpn_scanner.yml` runs at `7 * * * *` — **hourly, 24 times a
 day**. Change that cron line to adjust it; `7,37 * * * *` gives half-hourly.
 
+**The schedule only holds up while this repo is public.** A private repo draws
+on the 2000 Actions-minutes-per-month allowance, and a run costs about 6.6
+minutes, so hourly needs roughly 4750. GitHub does not fail when the allowance
+runs out — it **silently skips the scheduled fires**, which looks exactly like
+a broken cron: no errors, no logs, just a run every few hours. If this repo is
+ever made private again, drop to `7 */3 * * *` (eight runs a day, ~1580
+minutes) or expect gaps.
+
 ## Safety properties
 
 - The runner's own network is never taken over: `redirect-gateway` is stripped
