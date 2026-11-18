@@ -13,7 +13,7 @@ VPN Gate site ──►  real SSTP connect + public-IP check  ─────┘
 ```
 
 The pipeline runs about hourly via GitHub Actions
-(`.github/workflows/vpn_scanner.yml`) and can also be triggered manually. See
+(`.github/workflows/scan.yml`) and can also be triggered manually. See
 [Schedule](#schedule) for why it does not simply use an hourly cron.
 
 A server only counts as healthy when the tunnel comes up **and** the public IP

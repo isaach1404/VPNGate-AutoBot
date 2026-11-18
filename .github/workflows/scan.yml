@@ -60,7 +60,7 @@ jobs:
               print(message, file=sys.stderr)
 
           def fetch_runs():
-              path = "/actions/workflows/vpn_scanner.yml/runs?per_page=50"
+              path = "/actions/workflows/scan.yml/runs?per_page=50"
               request = urllib.request.Request(
                   f"https://api.github.com/repos/{os.environ['REPO']}{path}",
                   headers={
