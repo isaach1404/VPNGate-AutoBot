@@ -3,134 +3,32 @@ name: VPN Gate Scanner
 
 on:
   workflow_dispatch:
-  # GitHub runs a scheduled workflow at only a fraction of its cron
-  # slots -- measured on this repo at ~9%, at random minutes and never
-  # on the requested one -- so a '7 * * * *' cron produced a run every
-  # 4-11 hours. The cron therefore asks every 5 minutes (the fastest
-  # GitHub allows) and the gate job decides whether the scan is due,
-  # which turns the schedule into a lower bound instead of a lottery.
-  # Most fires stop at the gate after a few seconds.
+  # GitHub fires this repo's schedule only ~4 times a day no matter
+  # what the cron says ('7,37', '7' and '*/5' all behaved alike, at
+  # random minutes, after ~85 hours of measurement). The scheduler
+  # cannot be relied on for an hourly cadence, so a fire is treated as
+  # a heartbeat: each run keeps scanning once an hour for about five
+  # hours before ending, and the next fire restarts it. Public repos
+  # get unmetered runner minutes, so the idle time between scans is
+  # free; `concurrency` below means a fire that lands mid-run simply
+  # waits and starts the next stretch instead of overlapping.
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '7 * * * *'
 
 permissions:
   contents: read
-  actions: read
 
 concurrency:
   group: vpn-gate-scanner
   cancel-in-progress: false
 
 jobs:
-  gate:
-    name: Decide whether a scan is due
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-
-    outputs:
-      due: ${{ steps.check.outputs.due }}
-
-    steps:
-      - name: Check whether a scan is due
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ github.run_id }}
-          EVENT_NAME: ${{ github.event_name }}
-          REPO: ${{ github.repository }}
-        run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-          import datetime
-          import json
-          import os
-          import sys
-          import urllib.request
-
-          INTERVAL_MINUTES = 50
-
-          # A scan runs for minutes; a gated-out fire stops within
-          # seconds. Duration is the cheapest reliable discriminator:
-          # it needs one API call, where matching on step names would
-          # need one per run and could stall the gate on rate limits.
-          SCAN_MINUTES = 3
-
-          def note(message):
-              # stdout is redirected into $GITHUB_OUTPUT, so anything
-              # that is not a key=value pair has to go to stderr.
-              print(message, file=sys.stderr)
-
-          def fetch_runs():
-              path = "/actions/workflows/scan.yml/runs?per_page=50"
-              request = urllib.request.Request(
-                  f"https://api.github.com/repos/{os.environ['REPO']}{path}",
-                  headers={
-                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
-                      "Accept": "application/vnd.github+json",
-                      "X-GitHub-Api-Version": "2022-11-28",
-                  },
-              )
-              with urllib.request.urlopen(request, timeout=30) as response:
-                  return json.load(response)["workflow_runs"]
-
-          def minutes_between(earlier, later):
-              start = datetime.datetime.fromisoformat(
-                  earlier.replace("Z", "+00:00")
-              )
-              end = datetime.datetime.fromisoformat(
-                  later.replace("Z", "+00:00")
-              )
-              return (end - start).total_seconds() / 60
-
-          def last_scan_minutes_ago():
-              """Age of the most recent run that actually scanned."""
-
-              current = int(os.environ["RUN_ID"])
-              now = datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-              for run in fetch_runs():
-                  if run["id"] == current or run["status"] != "completed":
-                      continue
-                  if run["conclusion"] != "success":
-                      continue
-                  if minutes_between(
-                      run["run_started_at"], run["updated_at"]
-                  ) < SCAN_MINUTES:
-                      continue
-
-                  return minutes_between(run["run_started_at"], now)
-
-              return None
-
-          def decide():
-              if os.environ["EVENT_NAME"] != "schedule":
-                  note("Manual run; scanning.")
-                  return True
-
-              try:
-                  elapsed = last_scan_minutes_ago()
-              except Exception as error:
-                  # Better to scan twice than never: the gate exists to
-                  # stop floods, not to become a new way to miss a run.
-                  note(f"Could not read run history ({error}); scanning.")
-                  return True
-
-              if elapsed is None:
-                  note("No earlier scan found; scanning.")
-                  return True
-
-              note(f"Last scan started {elapsed:.0f} min ago.")
-
-              return elapsed >= INTERVAL_MINUTES
-
-          print(f"due={'true' if decide() else 'false'}")
-          PY
-
   scan:
     name: Fetch VPN Gate Servers
-    needs: gate
-    if: needs.gate.outputs.due == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # GitHub kills a job at 6 hours; stop short of that so the loop
+    # ends cleanly and the next fire picks up without a gap.
+    timeout-minutes: 355
 
     steps:
       - name: Download project files
@@ -192,61 +90,71 @@ jobs:
           echo "SSTP package information:"
           apt-cache policy sstp-client
 
-      # continue-on-error keeps one failing half of the scan from
-      # blocking delivery of whatever the other half found.
-      - name: Run VPN Gate API scanner
-        continue-on-error: true
+      # One step so the scan can repeat. It stops of its own accord,
+      # well inside the job timeout, and the next scheduled fire starts
+      # a fresh stretch. Every stage keeps its own continue-on-error:
+      # a failure in one half must not stop the other half from being
+      # delivered.
+      - name: Scan and deliver every hour
         env:
           MAX_SERVERS_TO_TEST: "40"
           MAX_TEST_SECONDS: "600"
-        run: python src/vpngate_api.py
-
-      - name: Fetch SSTP servers
-        continue-on-error: true
-        run: python src/sstp_fetcher.py
-
-      - name: Prepare PPP authentication
-        run: |
-          echo "Preparing PPP authentication files..."
-
-          echo "vpn * vpn *" | sudo tee /etc/ppp/chap-secrets
-          echo "vpn * vpn *" | sudo tee /etc/ppp/pap-secrets
-
-          sudo chmod 600 /etc/ppp/chap-secrets
-          sudo chmod 600 /etc/ppp/pap-secrets
-
-          echo "PPP authentication files prepared."
-
-      - name: Test SSTP servers
-        continue-on-error: true
-        run: python src/sstp_tester.py
-
-      - name: Collect run summary
-        if: always()
-        run: |
-          echo "========== OUTPUT FILES =========="
-          ls -la output/ 2>&1 || true
-
-          for file in output/selected_servers.json output/selected_sstp_servers.json; do
-            if [ -f "$file" ]; then
-              echo "--- $file ---"
-              python -c "import json,sys; print('entries:', len(json.load(open('$file'))))" || true
-            fi
-          done
-
-      - name: Send OpenVPN and SSTP servers to Telegram
-        continue-on-error: true
-        env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python src/telegram_sender.py
-
-      - name: Send OpenVPN and SSTP servers to Rubika
-        continue-on-error: true
-        env:
           RUBIKA_BOT_TOKEN: ${{ secrets.RUBIKA_BOT_TOKEN }}
           RUBIKA_CHAT_ID: ${{ secrets.RUBIKA_CHAT_ID }}
-        run: python src/rubika_sender.py
+        run: |
+          # A scan takes ~6.7 min, so 53 min of sleep makes a ~59.7 min
+          # cycle. The 305-minute budget allows six scans and ends at
+          # ~305 min, leaving ~50 min of slack under the 355-minute
+          # timeout for a slow scan or a stuck package install.
+          INTERVAL=3180
+          BUDGET=$((5 * 3600 + 300))
+          DEADLINE=$(( $(date +%s) + BUDGET ))
+          CYCLE=0
+
+          while :; do
+            CYCLE=$((CYCLE + 1))
+            echo "===== scan cycle $CYCLE at $(date -u '+%Y-%m-%d %H:%M UTC') ====="
+
+            # continue-on-error keeps one failing half of the scan from
+            # blocking delivery of whatever the other half found.
+            python src/vpngate_api.py || echo "OpenVPN scan failed; continuing."
+            python src/sstp_fetcher.py || echo "SSTP fetch failed; continuing."
+
+            echo "vpn * vpn *" | sudo tee /etc/ppp/chap-secrets > /dev/null
+            echo "vpn * vpn *" | sudo tee /etc/ppp/pap-secrets > /dev/null
+            sudo chmod 600 /etc/ppp/chap-secrets /etc/ppp/pap-secrets
+
+            python src/sstp_tester.py || echo "SSTP test failed; continuing."
+
+            echo "========== OUTPUT FILES =========="
+            ls -la output/ 2>&1 || true
+
+            for file in output/selected_servers.json output/selected_sstp_servers.json; do
+              if [ -f "$file" ]; then
+                echo "--- $file ---"
+                python -c "import json; print('entries:', len(json.load(open('$file'))))" || true
+              fi
+            done
+
+            python src/telegram_sender.py || echo "Telegram delivery failed; continuing."
+            python src/rubika_sender.py || echo "Rubika delivery failed; continuing."
+
+            now=$(date +%s)
+            remaining=$(( DEADLINE - now ))
+
+            if [ "$remaining" -le 0 ]; then
+              echo "Time budget spent; ending so the next fire can take over."
+              break
+            fi
+
+            pause=$INTERVAL
+            [ "$remaining" -lt "$pause" ] && pause=$remaining
+
+            echo "Next scan in $((pause / 60)) min."
+            sleep "$pause"
+          done
 
       - name: Package OpenVPN files
         if: always()

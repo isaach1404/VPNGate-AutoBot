@@ -121,25 +121,35 @@ delivers nothing fails instead, so a wrong token is visible.
 
 ## Schedule
 
-The workflow is meant to scan **about once an hour**, but it does not rely on
-GitHub firing cron precisely.
+The goal is a scan **about once an hour**. GitHub's scheduler will not deliver
+that on its own.
 
-A cron of `7 * * * *` produced a run every **4 to 11 hours** in practice: over
-85 hours GitHub fired only 14 times instead of ~138, at random minutes and
-never on `:07`. This is the scheduler's own behaviour, not a workflow bug — the
-runs that did fire started with zero queue delay and succeeded. Tightening the
-cron cannot fix it.
+Measured over 85 hours, this repo's scheduled workflow fired only **14 times
+instead of ~138**, at random minutes and never on the requested `:07`. Gaps ran
+3.5–10.7 hours. That held for `7,37 * * * *`, for `7 * * * *` and for
+`*/5 * * * *` alike, and the runs that did fire succeeded with zero queue
+delay — so the cron value is not the variable, and no cron can fix it. Moving
+to a fresh workflow file restored firing after a stall, but not the rate.
 
-So the cron asks every 5 minutes (`*/5 * * * *`, the fastest GitHub allows) and
-a `gate` job decides whether the scan is actually due. The gate looks at the
-most recent run that really scanned and lets the scan start only once
-`INTERVAL_MINUTES` (50) have passed. Gated-out fires finish in a few seconds,
-and manual runs always scan. The result is that the interval is a **lower
-bound** rather than a lottery: you get a scan at least every hour or so, and
-never two in quick succession.
+So a scheduled fire is only treated as a **heartbeat**. Each run installs the
+VPN clients once, then loops: scan, deliver, sleep until the next hour, repeat
+for about five hours, then exit normally. The next fire starts a fresh stretch.
+Because this repo is public its runner minutes are unmetered, so the idle
+minutes between scans cost nothing. `concurrency` is set so a fire landing
+mid-run waits rather than cancelling the run in progress.
 
-To change the interval, edit `INTERVAL_MINUTES` in the gate step. To change how
-often it is attempted, edit the cron line.
+In practice that turns roughly three scans a day into roughly twenty. A gap
+longer than the ~5-hour stretch (drawn from that 3.5–10.7 hour history) still
+leaves a hole until the next fire, which is the one limitation of this design.
+
+Tuning, all in the `Scan and deliver every hour` step:
+
+| Value | Meaning |
+| --- | --- |
+| `INTERVAL` | Seconds between scan starts (3180 ≈ 53 min, so ~59.7 min cycles) |
+| `BUDGET` | Seconds the loop may run before exiting on its own |
+| cron line | How often a heartbeat is attempted |
+| `timeout-minutes` | Job cap; must stay above `BUDGET` with room for one slow scan |
 
 ## Safety properties
 
