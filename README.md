@@ -138,20 +138,21 @@ Because this repo is public its runner minutes are unmetered, so the idle
 minutes between scans cost nothing. `concurrency` is set so a fire landing
 mid-run waits rather than cancelling the run in progress.
 
-Measured over the first three days: **75% uptime, ~19 scans a day** (seven
-scans per run, ~310 minutes each), against ~3 a day before. Gaps fell from
-4–11 hours to 0–4 hours.
+The current setting is **2.5 hours** between scans: three scans per run, at 0,
+150 and 300 minutes. That is a deliberate trade — fewer, more spaced scans.
 
-A gap longer than one stretch still leaves a hole until the next fire. That is
-the known limit of this design: it makes the schedule *denser*, not exact.
-Raising `BUDGET` does not help — GitHub ends a job at 6 hours regardless — so
-the only way to close the remaining 25% is a trigger from outside GitHub.
+The limit to know: silence can only be as short as `gap between fires +
+INTERVAL`. With the 0–234 minute fire gaps measured over three days, a 2.5
+hour interval gives a **worst case of about 6.4 hours** without a scan (an
+hourly interval gave 4.9). A shorter `INTERVAL` means more scans but more
+messages; a longer one means fewer messages and longer silences. Raising
+`BUDGET` does not help — GitHub ends a job at 6 hours regardless.
 
 Tuning, all in the `Scan and deliver every hour` step:
 
 | Value | Meaning |
 | --- | --- |
-| `INTERVAL` | Seconds between scan starts (3180 ≈ 53 min, so ~59.7 min cycles) |
+| `INTERVAL` | Seconds between scan starts (8600 ≈ 143 min, so 150 min / 2.5 hour cycles) |
 | `BUDGET` | Seconds the loop may run before exiting on its own |
 | cron line | How often a heartbeat is attempted |
 | `timeout-minutes` | Job cap; must stay above `BUDGET` with room for one slow scan |

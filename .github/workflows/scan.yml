@@ -104,11 +104,11 @@ jobs:
           RUBIKA_BOT_TOKEN: ${{ secrets.RUBIKA_BOT_TOKEN }}
           RUBIKA_CHAT_ID: ${{ secrets.RUBIKA_CHAT_ID }}
         run: |
-          # A scan takes ~6.7 min, so 53 min of sleep makes a ~59.7 min
-          # cycle. The 305-minute budget allows six scans and ends at
-          # ~305 min, leaving ~50 min of slack under the 355-minute
-          # timeout for a slow scan or a stuck package install.
-          INTERVAL=3180
+          # A scan takes ~6.7 min, so 143 min of sleep makes a 150 min
+          # (2.5 hour) cycle. The 305-minute budget allows three scans
+          # and ends at ~300 min, leaving ~55 min of slack under the
+          # 355-minute timeout for a slow scan or a stuck install.
+          INTERVAL=8600
           BUDGET=$((5 * 3600 + 300))
           DEADLINE=$(( $(date +%s) + BUDGET ))
           CYCLE=0
