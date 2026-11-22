@@ -138,9 +138,14 @@ Because this repo is public its runner minutes are unmetered, so the idle
 minutes between scans cost nothing. `concurrency` is set so a fire landing
 mid-run waits rather than cancelling the run in progress.
 
-In practice that turns roughly three scans a day into roughly twenty. A gap
-longer than the ~5-hour stretch (drawn from that 3.5–10.7 hour history) still
-leaves a hole until the next fire, which is the one limitation of this design.
+Measured over the first three days: **75% uptime, ~19 scans a day** (seven
+scans per run, ~310 minutes each), against ~3 a day before. Gaps fell from
+4–11 hours to 0–4 hours.
+
+A gap longer than one stretch still leaves a hole until the next fire. That is
+the known limit of this design: it makes the schedule *denser*, not exact.
+Raising `BUDGET` does not help — GitHub ends a job at 6 hours regardless — so
+the only way to close the remaining 25% is a trigger from outside GitHub.
 
 Tuning, all in the `Scan and deliver every hour` step:
 
